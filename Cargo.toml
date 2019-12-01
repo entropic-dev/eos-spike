@@ -1,0 +1,31 @@
+[package]
+name = "entropic-object-store"
+version = "0.1.0"
+authors = ["Chris Dickinson <christopher.s.dickinson@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+async-trait = "0.1.17"
+anyhow = "1.0.22"
+thiserror = "1.0.6"
+sha2 = "0.8.0"
+base64 = "0.11.0"
+digest = "0.8.0"
+sha-1 = "0.8.1"
+sha1 = "0.6.0"
+hex = "0.4.0"
+flate2 = { version = "1.0.13", features = ["tokio"] }
+structopt = "0.3.5"
+dirs = "2.0.2"
+colored = "1.9.0"
+futures = "0.3.1"
+
+[dependencies.async-std]
+version = "1.2.0"
+features = ["attributes"]
+
+[[bin]]
+name = "eos"
+path = "src/bin/eos.rs"

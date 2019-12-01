@@ -11,6 +11,7 @@ use std::io::prelude::*;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 
+#[derive(Clone)]
 pub struct LooseStore<D> {
     location: PathBuf,
     phantom: PhantomData<D>
@@ -32,7 +33,7 @@ impl<D> LooseStore<D> {
 
 #[async_trait]
 impl<D: 'static + Digest + Send + Sync> WritableStore<D> for LooseStore<D> {
-    async fn add<T: AsRef<[u8]> + Send>(&mut self, object: Object<T>) -> anyhow::Result<()> {
+    async fn add<T: AsRef<[u8]> + Send>(&self, object: Object<T>) -> anyhow::Result<()> {
         let mut digest = D::new();
         let item = object.bytes().as_ref();
         let header = format!("{} {}\0", object.to_string(), item.len());

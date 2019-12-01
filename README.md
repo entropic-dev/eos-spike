@@ -15,6 +15,7 @@ The goals of this module are as follows:
 - Optimize for read performance over write performance
     - writes happen once per unique content encounter
     - reads happen multiple times every time the node program executes
+- Older versions of files may become unused over time
 
 Prior art:
 

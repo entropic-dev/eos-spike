@@ -1,6 +1,7 @@
 use std::fmt::{ Formatter, Display, Result as FmtResult };
 use crate::errors::ObjectStoreError;
 
+#[derive(Debug)]
 pub enum Object<T: AsRef<[u8]> + Send> {
     Blob(T),
     Version(T),

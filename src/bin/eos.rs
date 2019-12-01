@@ -1,6 +1,6 @@
 #![feature(async_closure)]
 use entropic_object_store::stores::loose::LooseStore;
-use entropic_object_store::stores::WritableStore;
+use entropic_object_store::stores::{ReadableStore, WritableStore};
 use entropic_object_store::object::Object;
 use sha2::Sha256;
 use digest::Digest;
@@ -18,6 +18,9 @@ enum Command {
     Add {
         #[structopt(parse(from_os_str))]
         files: Vec<PathBuf>
+    },
+    Get {
+        hashes: Vec<String>
     }
 }
 
@@ -30,16 +33,76 @@ struct Eos {
     command: Command
 }
 
-async fn load_file(store: &LooseStore<Sha256>, file: PathBuf) -> anyhow::Result<()> {
+async fn load_file(store: &LooseStore<Sha256>, file: PathBuf) -> anyhow::Result<String> {
     match fs::read(&file).await {
         Err(e) => {
-            println!("{} failed to write {:?}", "ERR:".black().on_red(), file);
+            Ok(format!("{} failed to read {:?}", "ERR:".black().on_red(), file))
         },
         Ok(data) => {
-            println!("{} wrote {:?}", "OK:".white().on_green(), file);
-            store.add(Object::Blob(data)).await;
+            let result = match store.add(Object::Blob(data)).await {
+                Err(_e) => return Ok(format!("{} failed to write {:?}", "ERR:".black().on_red(), file)),
+                Ok(f) => f
+            };
+
+            if result {
+                Ok(format!("{} wrote {:?}", "OK: ".white().on_green(), file))
+            } else {
+                Ok(format!("{} already had {:?}", "MU: ".white().on_purple(), file))
+            }
         }
-    };
+    }
+}
+
+async fn cmd_add(store: LooseStore<Sha256>, files: &Vec<PathBuf>) -> anyhow::Result<()> {
+    let mut results = Vec::new();
+    for file in files.iter().filter_map(|file| {
+        file.canonicalize().ok()
+    }) {
+        results.push(load_file(&store, file));
+    }
+
+    for output in join_all(results).await {
+        println!("{}", output?);
+    }
+    Ok(())
+}
+
+async fn cmd_get(store: LooseStore<Sha256>, hashes: &Vec<String>) -> anyhow::Result<()> {
+    let cksize = Sha256::new().result().len();
+    let valid_hashes: Vec<_> = hashes.iter().filter_map(|xs| {
+        let decoded = hex::decode(xs).ok()?;
+        if decoded.len() != cksize {
+            return None
+        }
+        Some(decoded)
+    }).collect();
+
+    let mut results = Vec::new();
+    for hash in valid_hashes {
+        results.push(store.get(hash));
+    }
+
+    let results = join_all(results).await;
+    for object in results {
+        match object {
+            Ok(opt) => {
+                match opt {
+                    Some(obj) => {
+                        println!("{} got {}", "OK: ".white().on_green(), obj.to_string());
+                    },
+                    None => {
+                        println!("{} could not find that hash", "MU: ".white().on_purple());
+
+                    }
+                }
+            },
+            Err(_e) => {
+                dbg!(_e);
+                println!("{} error reading hash", "ERR:".white().on_red());
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -54,17 +117,8 @@ async fn main () -> anyhow::Result<()> {
 
     let loose = LooseStore::<Sha256>::new(destination);
     match &eos.command {
-        Command::Add { files } => {
-            let mut results = Vec::new();
-
-            for file in files.iter().filter_map(|file| {
-                file.canonicalize().ok()
-            }) {
-                results.push(load_file(&loose, file));
-            }
-
-            join_all(results).await
-        }
+        Command::Add { files } => cmd_add(loose, files).await?,
+        Command::Get { hashes } => cmd_get(loose, hashes).await?
     };
     Ok(())
 }

@@ -35,7 +35,7 @@ struct Eos {
     command: Command
 }
 
-async fn load_file(store: &LooseStore<Sha256>, file: PathBuf) -> anyhow::Result<String> {
+async fn load_file<D: Digest + Send + Sync, S: WritableStore<D>>(store: &S, file: PathBuf) -> anyhow::Result<String> {
     match fs::read(&file).await {
         Err(e) => {
             Ok(format!("{} failed to read {:?}", "ERR:".black().on_red(), file))
@@ -55,7 +55,7 @@ async fn load_file(store: &LooseStore<Sha256>, file: PathBuf) -> anyhow::Result<
     }
 }
 
-async fn cmd_add(store: LooseStore<Sha256>, files: &Vec<PathBuf>) -> anyhow::Result<()> {
+async fn cmd_add<D: Digest + Send + Sync, S: WritableStore<D>>(store: S, files: &Vec<PathBuf>) -> anyhow::Result<()> {
     let mut results = Vec::new();
     for file in files.iter().filter_map(|file| {
         file.canonicalize().ok()
@@ -69,7 +69,7 @@ async fn cmd_add(store: LooseStore<Sha256>, files: &Vec<PathBuf>) -> anyhow::Res
     Ok(())
 }
 
-async fn cmd_get(store: LooseStore<Sha256>, hashes: &Vec<String>) -> anyhow::Result<()> {
+async fn cmd_get<S: ReadableStore>(store: S, hashes: &Vec<String>) -> anyhow::Result<()> {
     let cksize = Sha256::new().result().len();
     let valid_hashes: Vec<_> = hashes.iter().filter_map(|xs| {
         let decoded = hex::decode(xs).ok()?;

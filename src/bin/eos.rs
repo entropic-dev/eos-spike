@@ -21,6 +21,8 @@ enum Command {
     },
     Get {
         hashes: Vec<String>
+    },
+    Pack {
     }
 }
 
@@ -118,7 +120,8 @@ async fn main () -> anyhow::Result<()> {
     let loose = LooseStore::<Sha256>::new(destination);
     match &eos.command {
         Command::Add { files } => cmd_add(loose, files).await?,
-        Command::Get { hashes } => cmd_get(loose, hashes).await?
+        Command::Get { hashes } => cmd_get(loose, hashes).await?,
+        Command::Pack { } => loose.to_packed_store().await?
     };
     Ok(())
 }

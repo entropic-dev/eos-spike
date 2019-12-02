@@ -24,7 +24,9 @@ pub trait WritableStore<D: Digest + Send + Sync> {
 
 #[async_trait]
 pub trait ReadableStore {
+    type ObjectStream;
+
     async fn get<T: AsRef<[u8]> + Send>(&self, item: T) -> anyhow::Result<Option<Object<Vec<u8>>>>;
-    async fn list<R: Stream<Item = Vec<u8>>>(&self) -> R;
+    async fn list(&self) -> Self::ObjectStream;
     async fn get_stream<'a, T: AsRef<[u8]> + Send, R: Stream<Item = &'a [u8]>>(&self, item: T) -> Option<R>;
 }

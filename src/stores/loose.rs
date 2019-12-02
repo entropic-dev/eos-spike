@@ -14,6 +14,7 @@ use std::io::Write;
 use flate2::write::{ ZlibEncoder };
 use flate2::bufread::{ ZlibDecoder };
 use flate2::Compression;
+use std::pin::Pin;
 
 #[derive(Clone)]
 pub struct LooseStore<D> {
@@ -34,13 +35,49 @@ impl<D> LooseStore<D> {
         0
     }
 
-    pub async fn to_packed_store() -> anyhow::Result<()> {
-        // enumerate all objects
-        // fill out objects with recency/sortorderinfo
-        // sort objects by type, then "sortpath" (basename/dir for blobs, semver order descending for packages)
-        // walk each object type with a sliding window of comparisons. write deltas if they're >50% compression.
-        // 
+    // enumerate all objects
+    // fill out objects with recency/sortorderinfo
+    // - sort objects by type, then "sortpath"
+    //    - basename/dir for blobs, semver order descending for packages
+    // - walk each object type with a sliding window of comparisons.
+    //    - write deltas if they're >50% compression.
+    pub async fn to_packed_store(&self) -> anyhow::Result<()> {
+        let entries: Vec<String> = std::fs::read_dir(&self.location)?
+            .filter_map(|xs| {
+                let dent = xs.ok()?;
+                let filename = dent.file_name();
+                let name = filename.to_string_lossy();
+                if name.len() != 2 {
+                    return None
+                }
+                name.parse::<u8>().ok()?;
+                Some(dent.path())
+            })
+            .filter_map(|fullpath| {
+                Some(std::fs::read_dir(&fullpath).ok()?.filter_map(|xs| {
+                    let dent = xs.ok()?;
+                    let name = dent.file_name();
+                    Some(format!("{}{}", fullpath.file_name()?.to_string_lossy(), name.to_string_lossy()))
+                }).collect::<Vec<_>>())
+            })
+            .flatten()
+            .collect();
+
+        println!("len={}", entries.len());
         Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub struct LooseObjectStream<D> {
+    location: PathBuf,
+    phantom: PhantomData<D>
+}
+
+impl<D> Stream for LooseObjectStream<D> {
+    type Item = Object<Vec<u8>>;
+    fn poll_next(self: Pin<&mut Self>, cx: &mut futures::task::Context) -> futures::task::Poll<Option<Self::Item>> {
+        unimplemented!();
     }
 }
 
@@ -108,6 +145,8 @@ impl<D: 'static + Digest + Send + Sync> WritableStore<D> for LooseStore<D> {
 
 #[async_trait]
 impl<D: 'static + Digest + Send + Sync> ReadableStore for LooseStore<D> {
+    type ObjectStream = LooseObjectStream<D>;
+
     async fn get<T: AsRef<[u8]> + Send>(&self, item: T) -> anyhow::Result<Option<Object<Vec<u8>>>> {
         let bytes = item.as_ref();
         let bytes_encoded = hex::encode(bytes);
@@ -162,7 +201,8 @@ impl<D: 'static + Digest + Send + Sync> ReadableStore for LooseStore<D> {
         }
     }
 
-    async fn list<R: Stream<Item = Vec<u8>>>(&self) -> R {
+    async fn list(&self) -> Self::ObjectStream {
+
         unimplemented!()
     }
 

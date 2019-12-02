@@ -15,6 +15,7 @@ use flate2::write::{ ZlibEncoder };
 use flate2::bufread::{ ZlibDecoder };
 use flate2::Compression;
 use std::pin::Pin;
+use futures::future::{join_all};
 
 #[derive(Clone)]
 pub struct LooseStore<D> {
@@ -22,7 +23,7 @@ pub struct LooseStore<D> {
     phantom: PhantomData<D>
 }
 
-impl<D> LooseStore<D> {
+impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
     pub fn new<P: AsRef<Path>>(path: P) -> Self {
         LooseStore {
             location: PathBuf::from(path.as_ref()),
@@ -35,14 +36,9 @@ impl<D> LooseStore<D> {
         0
     }
 
-    // enumerate all objects
-    // fill out objects with recency/sortorderinfo
-    // - sort objects by type, then "sortpath"
-    //    - basename/dir for blobs, semver order descending for packages
-    // - walk each object type with a sliding window of comparisons.
-    //    - write deltas if they're >50% compression.
     pub async fn to_packed_store(&self) -> anyhow::Result<()> {
-        let entries: Vec<String> = std::fs::read_dir(&self.location)?
+        // faster to do the dir listing synchronously
+        let entries = std::fs::read_dir(&self.location)?
             .filter_map(|xs| {
                 let dent = xs.ok()?;
                 let filename = dent.file_name();
@@ -52,18 +48,141 @@ impl<D> LooseStore<D> {
                 }
                 name.parse::<u8>().ok()?;
                 Some(dent.path())
-            })
-            .filter_map(|fullpath| {
-                Some(std::fs::read_dir(&fullpath).ok()?.filter_map(|xs| {
-                    let dent = xs.ok()?;
-                    let name = dent.file_name();
-                    Some(format!("{}{}", fullpath.file_name()?.to_string_lossy(), name.to_string_lossy()))
-                }).collect::<Vec<_>>())
-            })
-            .flatten()
-            .collect();
+            });
 
-        println!("len={}", entries.len());
+        let mut results = Vec::new();
+        for path in entries {
+            results.push(async_std::task::spawn(async move {
+                let mut entries = fs::read_dir(&path).await.ok()?;
+                let mut items = Vec::new();
+                while let Some(res) = entries.next().await {
+                    let entry = res.ok()?;
+                    items.push(hex::decode(format!("{}{}", path.file_name().unwrap().to_string_lossy(), entry.file_name().to_string_lossy())).ok()?);
+                }
+                Some(items)
+            }));
+        }
+
+        let results = join_all(results).await;
+        let flattened: Vec<_> = results.iter().flatten().flatten().collect();
+
+        // write magic ("ENTS")
+        // write version (4 bytes, big-endian): 0
+        // write object count (4 bytes, big-endian)
+        // write objects
+        //   write object type + size
+        //   write object bytes
+        // write crc32 code
+        let mut tmp = self.location.clone();
+        tmp.push(format!("tmp-{}-pack", std::process::id()));
+        // place the bytes on disk
+        let mut fd = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&tmp).await?;
+
+        let version = 0x0u32.to_be_bytes();
+        fd.write_all(b"ENTS").await?;
+        fd.write_all(&version[..]).await?;
+        fd.write_all(&flattened.len().to_be_bytes()).await?;
+        let mut offs = 16;
+        let mut offsets = Vec::new();
+        for hash in &flattened {
+            offsets.push(offs);
+            let obj = self.get(hash).await?.unwrap();
+            let (typ, bytes) = match &obj {
+                Object::Blob(bytes) => (0u8, bytes),
+                Object::Signature(bytes) => (1u8, bytes),
+                Object::Version(bytes) => (2u8, bytes)
+            };
+            let mut size = bytes.len();
+            let mut size_bytes = Vec::new();
+            let first = (typ << 4 | (size & 0xf) as u8 | (if size > 0xf { 0x80  } else { 0x00 })) as u8;
+            size = (size & !0xf) >> 4;
+            size_bytes.push(first);
+            while size > 0 {
+                let next = (size & 0x7f) as u8;
+                size = (size & !0x7f) >> 7;
+                let continuation: u8 = (if size > 0 { 0x80 } else { 0 }) | next;
+                size_bytes.push(continuation);
+            }
+            fd.write_all(&size_bytes[..]).await?;
+            offs += size_bytes.len();
+
+            let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+            enc.write_all(bytes);
+            let finished = &enc.finish()?;
+            offs += finished.len();
+            fd.write_all(finished).await?;
+        }
+
+        // zipper the hashes and offsets together.
+        let mut sorted = flattened.iter().zip(offsets.iter()).collect::<Vec<_>>();
+
+        sorted.sort_unstable_by(|lhs, rhs| {
+            lhs.0.cmp(rhs.0)
+        });
+
+        let mut fanout = [0u8; 1024];
+        let mut fanout_idx: usize = 0;
+        let mut object_idx: usize = 0;
+        while fanout_idx < 256 && object_idx < sorted.len() {
+            while sorted[object_idx].0[0] as usize != fanout_idx {
+                let fanout_base = fanout_idx << 2;
+                let bytes = object_idx.to_be_bytes();
+                fanout[fanout_base] = bytes[0];
+                fanout[fanout_base + 1] = bytes[1];
+                fanout[fanout_base + 2] = bytes[2];
+                fanout[fanout_base + 3] = bytes[3];
+                fanout_idx += 1;
+                if fanout_idx == 256 {
+                    break
+                }
+            }
+
+            while sorted[object_idx].0[0] as usize == fanout_idx {
+                object_idx += 1;
+                if object_idx >= sorted.len() {
+                    break
+                }
+            }
+
+            let fanout_base = fanout_idx << 2;
+            let bytes = object_idx.to_be_bytes();
+            fanout[fanout_base] = bytes[0];
+            fanout[fanout_base + 1] = bytes[1];
+            fanout[fanout_base + 2] = bytes[2];
+            fanout[fanout_base + 3] = bytes[3];
+            fanout_idx += 1;
+        }
+
+        while fanout_idx < 256 {
+            let fanout_base = fanout_idx << 2;
+            let bytes = object_idx.to_be_bytes();
+            fanout[fanout_base] = bytes[0];
+            fanout[fanout_base + 1] = bytes[1];
+            fanout[fanout_base + 2] = bytes[2];
+            fanout[fanout_base + 3] = bytes[3];
+            fanout_idx += 1;
+        }
+
+        let mut tmpidx = self.location.clone();
+        tmpidx.push(format!("tmp-{}-idx", std::process::id()));
+        // place the bytes on disk
+        let mut fd = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&tmpidx).await?;
+
+        fd.write_all(b"EIDX").await?;
+        fd.write_all(&version[..]).await?;
+        fd.write_all(&flattened.len().to_be_bytes()).await?;
+        fd.write_all(&fanout[..]).await?;
+        for (hash, offset) in sorted {
+            fd.write_all(&hash).await?;
+            fd.write_all(&offset.to_be_bytes()).await?;
+        }
+
         Ok(())
     }
 }

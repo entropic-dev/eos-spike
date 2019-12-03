@@ -1,10 +1,11 @@
 #![feature(async_closure)]
 use entropic_object_store::stores::loose::LooseStore;
+use entropic_object_store::stores::packed::PackedStore;
 use entropic_object_store::stores::{ReadableStore, WritableStore};
 use entropic_object_store::object::Object;
 use sha2::Sha256;
 use digest::Digest;
-use anyhow;
+use anyhow::{ self, bail };
 use structopt::{ StructOpt };
 use std::path::{ Path, PathBuf };
 use colored::Colorize;
@@ -12,6 +13,24 @@ use async_std::fs;
 use async_std::prelude::*;
 use futures::prelude::*;
 use futures::future::{join_all};
+use std::str::FromStr;
+
+enum Backends {
+    Loose,
+    Packed
+}
+
+impl FromStr for Backends {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "loose" => Ok(Backends::Loose),
+            "packed" => Ok(Backends::Packed),
+            s => bail!("not a recognized backed: \"{}\"", s)
+        }
+    }
+}
 
 #[derive(StructOpt)]
 enum Command {
@@ -20,7 +39,9 @@ enum Command {
         files: Vec<PathBuf>
     },
     Get {
-        hashes: Vec<String>
+        hashes: Vec<String>,
+        #[structopt(short, long, default_value = "loose")]
+        backend: Backends
     },
     Pack {
     }
@@ -78,6 +99,7 @@ async fn cmd_get<S: ReadableStore>(store: S, hashes: &Vec<String>) -> anyhow::Re
         }
         Some(decoded)
     }).collect();
+    let cleaned_hashes: Vec<_> = valid_hashes.iter().map(|xs| hex::encode(xs)).collect();
 
     let mut results = Vec::new();
     for hash in valid_hashes {
@@ -85,15 +107,16 @@ async fn cmd_get<S: ReadableStore>(store: S, hashes: &Vec<String>) -> anyhow::Re
     }
 
     let results = join_all(results).await;
-    for object in results {
+    for (idx, object) in results.iter().enumerate() {
         match object {
             Ok(opt) => {
                 match opt {
                     Some(obj) => {
                         println!("{} got {}", "OK: ".white().on_green(), obj.to_string());
+                        //::std::io::Write::write_all(&mut ::std::io::stdout(), obj.bytes());
                     },
                     None => {
-                        println!("{} could not find that hash", "MU: ".white().on_purple());
+                        println!("{} could not find that hash ({})", "MU: ".white().on_purple(), cleaned_hashes[idx]);
 
                     }
                 }
@@ -117,10 +140,24 @@ async fn main () -> anyhow::Result<()> {
         pb
     });
 
+    let mut packfile = destination.clone();
+    let mut packindex = destination.clone();
+    packfile.push("tmp");
+    packfile.push("tmp-4700-pack");
+    packindex.push("tmp");
+    packindex.push("tmp-4700-idx");
+
+    let packed = PackedStore::<Sha256>::new(packfile, packindex)?;
+
     let loose = LooseStore::<Sha256>::new(destination);
     match &eos.command {
         Command::Add { files } => cmd_add(loose, files).await?,
-        Command::Get { hashes } => cmd_get(loose, hashes).await?,
+        Command::Get { hashes, backend } => {
+            match backend {
+                Backends::Loose => cmd_get(loose, hashes).await?,
+                Backends::Packed => cmd_get(packed, hashes).await?,
+            }
+        },
         Command::Pack { } => loose.to_packed_store().await?
     };
     Ok(())

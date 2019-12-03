@@ -46,7 +46,7 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
                 if name.len() != 2 {
                     return None
                 }
-                name.parse::<u8>().ok()?;
+                hex::decode(&name[..]).ok()?;
                 Some(dent.path())
             });
 
@@ -74,6 +74,7 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
         //   write object bytes
         // write crc32 code
         let mut tmp = self.location.clone();
+        tmp.push("tmp");
         tmp.push(format!("tmp-{}-pack", std::process::id()));
         // place the bytes on disk
         let mut fd = fs::OpenOptions::new()
@@ -129,7 +130,7 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
         while fanout_idx < 256 && object_idx < sorted.len() {
             while sorted[object_idx].0[0] as usize != fanout_idx {
                 let fanout_base = fanout_idx << 2;
-                let bytes = object_idx.to_be_bytes();
+                let bytes = (object_idx as u32).to_be_bytes();
                 fanout[fanout_base] = bytes[0];
                 fanout[fanout_base + 1] = bytes[1];
                 fanout[fanout_base + 2] = bytes[2];
@@ -148,7 +149,7 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
             }
 
             let fanout_base = fanout_idx << 2;
-            let bytes = object_idx.to_be_bytes();
+            let bytes = (object_idx as u32).to_be_bytes();
             fanout[fanout_base] = bytes[0];
             fanout[fanout_base + 1] = bytes[1];
             fanout[fanout_base + 2] = bytes[2];
@@ -158,7 +159,7 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
 
         while fanout_idx < 256 {
             let fanout_base = fanout_idx << 2;
-            let bytes = object_idx.to_be_bytes();
+            let bytes = (object_idx as u32).to_be_bytes();
             fanout[fanout_base] = bytes[0];
             fanout[fanout_base + 1] = bytes[1];
             fanout[fanout_base + 2] = bytes[2];
@@ -167,6 +168,7 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
         }
 
         let mut tmpidx = self.location.clone();
+        tmpidx.push("tmp");
         tmpidx.push(format!("tmp-{}-idx", std::process::id()));
         // place the bytes on disk
         let mut fd = fs::OpenOptions::new()
@@ -176,11 +178,13 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
 
         fd.write_all(b"EIDX").await?;
         fd.write_all(&version[..]).await?;
-        fd.write_all(&flattened.len().to_be_bytes()).await?;
         fd.write_all(&fanout[..]).await?;
-        for (hash, offset) in sorted {
+        for (hash, offset) in &sorted {
             fd.write_all(&hash).await?;
-            fd.write_all(&offset.to_be_bytes()).await?;
+        }
+        for (hash, offset) in &sorted {
+            let offs_u32 = (**offset) as u32;
+            fd.write_all(&offs_u32.to_be_bytes()).await?;
         }
 
         Ok(())
@@ -233,7 +237,8 @@ impl<D: 'static + Digest + Send + Sync> WritableStore<D> for LooseStore<D> {
         };
 
         let mut tmp = self.location.clone();
-        tmp.push(format!("tmp-{}-{}", std::process::id(), bytes_encoded));
+        tmp.push("tmp");
+        tmp.push(format!("loose-{}-{}", std::process::id(), bytes_encoded));
         // place the bytes on disk
         let mut fd = fs::OpenOptions::new()
             .create(true)

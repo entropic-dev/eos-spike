@@ -4,6 +4,7 @@ use crate::object::Object;
 use sha2::Digest;
 
 pub mod loose;
+pub mod packed;
 
 // WritableStore
 // - add(Hashable) -> <present | not present>

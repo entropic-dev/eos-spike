@@ -1,33 +1,34 @@
-use async_std::{ fs, stream::Stream, prelude::* };
-use async_std::io::prelude::*;
-use async_trait::async_trait;
-use crate::stores::{ WritableStore, ReadableStore };
-use std::path::{ Path, PathBuf };
-use sha2::Digest;
-use anyhow::{ self, bail };
-use std::marker::PhantomData;
 use crate::object::Object;
+use crate::stores::{ReadableStore, WritableStore};
+use anyhow::{self, bail};
+use async_std::io::prelude::*;
 use async_std::prelude::*;
-use std::io::prelude::*;
-use std::io::{ BufReader, BufRead };
-use std::io::Write;
-use flate2::write::{ ZlibEncoder };
-use flate2::bufread::{ ZlibDecoder };
+use async_std::{fs, prelude::*, stream::Stream};
+use async_trait::async_trait;
+use flate2::bufread::ZlibDecoder;
+use flate2::write::ZlibEncoder;
 use flate2::Compression;
+use futures::future::join_all;
+use rayon::prelude::*;
+use sha2::Digest;
+use std::io::prelude::*;
+use std::io::Write;
+use std::io::{BufRead, BufReader};
+use std::marker::PhantomData;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use futures::future::{join_all};
 
 #[derive(Clone)]
 pub struct LooseStore<D> {
     location: PathBuf,
-    phantom: PhantomData<D>
+    phantom: PhantomData<D>,
 }
 
 impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
     pub fn new<P: AsRef<Path>>(path: P) -> Self {
         LooseStore {
             location: PathBuf::from(path.as_ref()),
-            phantom: PhantomData
+            phantom: PhantomData,
         }
     }
 
@@ -38,17 +39,16 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
 
     pub async fn to_packed_store(&self) -> anyhow::Result<()> {
         // faster to do the dir listing synchronously
-        let entries = std::fs::read_dir(&self.location)?
-            .filter_map(|xs| {
-                let dent = xs.ok()?;
-                let filename = dent.file_name();
-                let name = filename.to_string_lossy();
-                if name.len() != 2 {
-                    return None
-                }
-                hex::decode(&name[..]).ok()?;
-                Some(dent.path())
-            });
+        let entries = std::fs::read_dir(&self.location)?.filter_map(|xs| {
+            let dent = xs.ok()?;
+            let filename = dent.file_name();
+            let name = filename.to_string_lossy();
+            if name.len() != 2 {
+                return None;
+            }
+            hex::decode(&name[..]).ok()?;
+            Some(dent.path())
+        });
 
         let mut results = Vec::new();
         for path in entries {
@@ -57,7 +57,14 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
                 let mut items = Vec::new();
                 while let Some(res) = entries.next().await {
                     let entry = res.ok()?;
-                    items.push(hex::decode(format!("{}{}", path.file_name().unwrap().to_string_lossy(), entry.file_name().to_string_lossy())).ok()?);
+                    items.push(
+                        hex::decode(format!(
+                            "{}{}",
+                            path.file_name().unwrap().to_string_lossy(),
+                            entry.file_name().to_string_lossy()
+                        ))
+                        .ok()?,
+                    );
                 }
                 Some(items)
             }));
@@ -80,7 +87,8 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
         let mut fd = fs::OpenOptions::new()
             .create(true)
             .write(true)
-            .open(&tmp).await?;
+            .open(&tmp)
+            .await?;
 
         let version = 0x0u32.to_be_bytes();
         fd.write_all(b"ENTS").await?;
@@ -94,11 +102,12 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
             let (typ, bytes) = match &obj {
                 Object::Blob(bytes) => (0u8, bytes),
                 Object::Signature(bytes) => (1u8, bytes),
-                Object::Version(bytes) => (2u8, bytes)
+                Object::Version(bytes) => (2u8, bytes),
             };
             let mut size = bytes.len();
             let mut size_bytes = Vec::new();
-            let first = (typ << 4 | (size & 0xf) as u8 | (if size > 0xf { 0x80  } else { 0x00 })) as u8;
+            let first =
+                (typ << 4 | (size & 0xf) as u8 | (if size > 0xf { 0x80 } else { 0x00 })) as u8;
             size = (size & !0xf) >> 4;
             size_bytes.push(first);
             while size > 0 {
@@ -120,50 +129,34 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
         // zipper the hashes and offsets together.
         let mut sorted = flattened.iter().zip(offsets.iter()).collect::<Vec<_>>();
 
-        sorted.sort_unstable_by(|lhs, rhs| {
-            lhs.0.cmp(rhs.0)
-        });
+        sorted.par_sort_unstable_by(|lhs, rhs| lhs.0.cmp(rhs.0));
 
-        let mut fanout = [0u8; 1024];
+        let mut fanout = [0u32; 256];
         let mut fanout_idx: usize = 0;
         let mut object_idx: usize = 0;
         while fanout_idx < 256 && object_idx < sorted.len() {
             while sorted[object_idx].0[0] as usize != fanout_idx {
-                let fanout_base = fanout_idx << 2;
                 let bytes = (object_idx as u32).to_be_bytes();
-                fanout[fanout_base] = bytes[0];
-                fanout[fanout_base + 1] = bytes[1];
-                fanout[fanout_base + 2] = bytes[2];
-                fanout[fanout_base + 3] = bytes[3];
+                fanout[fanout_idx] = (object_idx as u32).to_be();
                 fanout_idx += 1;
                 if fanout_idx == 256 {
-                    break
+                    break;
                 }
             }
 
             while sorted[object_idx].0[0] as usize == fanout_idx {
                 object_idx += 1;
                 if object_idx >= sorted.len() {
-                    break
+                    break;
                 }
             }
 
-            let fanout_base = fanout_idx << 2;
-            let bytes = (object_idx as u32).to_be_bytes();
-            fanout[fanout_base] = bytes[0];
-            fanout[fanout_base + 1] = bytes[1];
-            fanout[fanout_base + 2] = bytes[2];
-            fanout[fanout_base + 3] = bytes[3];
+            fanout[fanout_idx] = (object_idx as u32).to_be();
             fanout_idx += 1;
         }
 
         while fanout_idx < 256 {
-            let fanout_base = fanout_idx << 2;
-            let bytes = (object_idx as u32).to_be_bytes();
-            fanout[fanout_base] = bytes[0];
-            fanout[fanout_base + 1] = bytes[1];
-            fanout[fanout_base + 2] = bytes[2];
-            fanout[fanout_base + 3] = bytes[3];
+            fanout[fanout_idx] = (object_idx as u32).to_be();
             fanout_idx += 1;
         }
 
@@ -174,11 +167,13 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
         let mut fd = fs::OpenOptions::new()
             .create(true)
             .write(true)
-            .open(&tmpidx).await?;
+            .open(&tmpidx)
+            .await?;
 
         fd.write_all(b"EIDX").await?;
         fd.write_all(&version[..]).await?;
-        fd.write_all(&fanout[..]).await?;
+        let fanout_bytes = unsafe { std::mem::transmute::<[u32; 256], [u8; 256 * 4]>(fanout) };
+        fd.write_all(&fanout_bytes[..]).await?;
         for (hash, offset) in &sorted {
             fd.write_all(&hash).await?;
         }
@@ -194,12 +189,15 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
 #[derive(Clone)]
 pub struct LooseObjectStream<D> {
     location: PathBuf,
-    phantom: PhantomData<D>
+    phantom: PhantomData<D>,
 }
 
 impl<D> Stream for LooseObjectStream<D> {
     type Item = Object<Vec<u8>>;
-    fn poll_next(self: Pin<&mut Self>, cx: &mut futures::task::Context) -> futures::task::Poll<Option<Self::Item>> {
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut futures::task::Context,
+    ) -> futures::task::Poll<Option<Self::Item>> {
         unimplemented!();
     }
 }
@@ -218,8 +216,8 @@ impl<D: 'static + Digest + Send + Sync> WritableStore<D> for LooseStore<D> {
         loc.push(&bytes_encoded[0..2]);
         if let Err(e) = fs::create_dir(&loc).await {
             match e.kind() {
-                std::io::ErrorKind::AlreadyExists => {},
-                _ => bail!(e)
+                std::io::ErrorKind::AlreadyExists => {}
+                _ => bail!(e),
             }
         }
         loc.push(&bytes_encoded[2..]);
@@ -227,7 +225,8 @@ impl<D: 'static + Digest + Send + Sync> WritableStore<D> for LooseStore<D> {
             .read(true)
             .create(false)
             .open(&loc)
-            .await {
+            .await
+        {
             Ok(_) => return Ok(false), // cache already contained the object
             Err(e) => {
                 if std::io::ErrorKind::NotFound != e.kind() {
@@ -243,7 +242,8 @@ impl<D: 'static + Digest + Send + Sync> WritableStore<D> for LooseStore<D> {
         let mut fd = fs::OpenOptions::new()
             .create(true)
             .write(true)
-            .open(&tmp).await?;
+            .open(&tmp)
+            .await?;
 
         let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
         enc.write_all(header.as_ref())?;
@@ -254,7 +254,11 @@ impl<D: 'static + Digest + Send + Sync> WritableStore<D> for LooseStore<D> {
         Ok(true)
     }
 
-    async fn add_stream<'a, S: Stream<Item = &'a [u8]> + Send>(&mut self, item: S, size_hint: Option<usize>) -> anyhow::Result<()> {
+    async fn add_stream<'a, S: Stream<Item = &'a [u8]> + Send>(
+        &mut self,
+        item: S,
+        size_hint: Option<usize>,
+    ) -> anyhow::Result<()> {
         unimplemented!()
     }
 
@@ -271,7 +275,10 @@ impl<D: 'static + Digest + Send + Sync> WritableStore<D> for LooseStore<D> {
 impl<D: 'static + Digest + Send + Sync> ReadableStore for LooseStore<D> {
     type ObjectStream = LooseObjectStream<D>;
 
-    async fn get<T: AsRef<[u8]> + Send>(&self, item: T) -> anyhow::Result<Option<Object<Vec<u8>>>> {
+    async fn get<T: AsRef<[u8]> + Send + Sync>(
+        &self,
+        item: T,
+    ) -> anyhow::Result<Option<Object<Vec<u8>>>> {
         let bytes = item.as_ref();
         let bytes_encoded = hex::encode(bytes);
         let mut loc = self.location.clone();
@@ -281,13 +288,14 @@ impl<D: 'static + Digest + Send + Sync> ReadableStore for LooseStore<D> {
             .read(true)
             .create(false)
             .open(&loc)
-            .await {
+            .await
+        {
             Ok(f) => f,
             Err(e) => {
                 if std::io::ErrorKind::NotFound != e.kind() {
                     bail!(e);
                 }
-                return Ok(None)
+                return Ok(None);
             }
         };
 
@@ -306,31 +314,29 @@ impl<D: 'static + Digest + Send + Sync> ReadableStore for LooseStore<D> {
         let str_size = std::str::from_utf8(&size_vec[..])?;
         let size = str_size[..str_size.len() - 1].parse::<usize>()?;
         if object.len() != size {
-            return bail!("mismatched len: got {} bytes, expected {}", object.len(), size)
+            return bail!(
+                "mismatched len: got {} bytes, expected {}",
+                object.len(),
+                size
+            );
         }
 
         return match std::str::from_utf8(&type_vec[..])? {
-            "blob " => {
-                Ok(Some(Object::Blob(object)))
-            },
-            "sign " => {
-                Ok(Some(Object::Signature(object)))
-            },
-            "vers " => {
-                Ok(Some(Object::Version(object)))
-            }
-            _ => {
-                bail!("Could not parse object type")
-            }
-        }
+            "blob " => Ok(Some(Object::Blob(object))),
+            "sign " => Ok(Some(Object::Signature(object))),
+            "vers " => Ok(Some(Object::Version(object))),
+            _ => bail!("Could not parse object type"),
+        };
     }
 
     async fn list(&self) -> Self::ObjectStream {
-
         unimplemented!()
     }
 
-    async fn get_stream<'a, T: AsRef<[u8]> + Send, R: Stream<Item = &'a [u8]>>(&self, item: T) -> Option<R> {
+    async fn get_stream<'a, T: AsRef<[u8]> + Send, R: Stream<Item = &'a [u8]>>(
+        &self,
+        item: T,
+    ) -> Option<R> {
         unimplemented!()
     }
 }

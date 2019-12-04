@@ -1,22 +1,22 @@
-use async_std::{ fs, stream::Stream };
-use crate::stores::ReadableStore;
-use async_trait::async_trait;
-use std::io::{ Cursor, Write, Seek, SeekFrom };
-use memmap::{ Mmap, MmapOptions };
-use std::path::{ Path, PathBuf };
-use std::marker::PhantomData;
-use anyhow::{ self, bail };
-use std::io::Read;
-use digest::Digest;
-use byteorder::{ BigEndian, ReadBytesExt };
 use crate::object::Object;
+use crate::stores::ReadableStore;
+use anyhow::{self, bail};
+use async_std::{fs, stream::Stream};
+use async_trait::async_trait;
+use byteorder::{BigEndian, ReadBytesExt};
+use digest::Digest;
 use flate2::bufread::ZlibDecoder;
-use std::io::prelude::*;
+use memmap::{Mmap, MmapOptions};
 use std;
+use std::io::prelude::*;
+use std::io::Read;
+use std::io::{Cursor, Seek, SeekFrom, Write};
+use std::marker::PhantomData;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone)]
 pub struct PackedObjectStream<D> {
-    phantom: PhantomData<D>
+    phantom: PhantomData<D>,
 }
 
 pub struct PackedIndex<D> {
@@ -24,7 +24,7 @@ pub struct PackedIndex<D> {
     ids: Vec<Vec<u8>>,
     offsets: Vec<u64>,
     next_offsets_indices: Vec<usize>,
-    phantom: PhantomData<D>
+    phantom: PhantomData<D>,
 }
 
 impl<D: Digest + Send + Sync> PackedIndex<D> {
@@ -48,26 +48,28 @@ impl<D: Digest + Send + Sync> PackedIndex<D> {
         let object_count = fanout[255] as usize;
         let oid_size = D::new().result().len();
 
-        let mut oid_bytes_vec = vec!(0u8; object_count * oid_size);
+        let mut oid_bytes_vec = vec![0u8; object_count * oid_size];
         input.read_exact(&mut oid_bytes_vec.as_mut_slice())?;
 
-        let ids: Vec<Vec<u8>> = oid_bytes_vec.chunks(oid_size).map(
-            |chunk| chunk.to_vec()
-        ).collect();
+        let ids: Vec<Vec<u8>> = oid_bytes_vec
+            .chunks(oid_size)
+            .map(|chunk| chunk.to_vec())
+            .collect();
 
-        let mut offsets_vec = vec!(0u32; object_count);
+        let mut offsets_vec = vec![0u32; object_count];
         input.read_u32_into::<BigEndian>(&mut offsets_vec.as_mut_slice())?;
 
         // TODO: use this to extend to 64bit offsets
-        let offsets: Vec<_> = offsets_vec.into_iter().map(|offset| {
-            offset as u64
-        }).collect();
+        let offsets: Vec<_> = offsets_vec
+            .into_iter()
+            .map(|offset| offset as u64)
+            .collect();
 
         let mut offset_idx_sorted: Vec<(usize, &u64)> = offsets.iter().enumerate().collect();
         offset_idx_sorted.sort_by_key(|(_, offset)| *offset);
         let mut next_offsets_indices = vec![0; offset_idx_sorted.len()];
         let mut idx = 0;
-        eprintln!("idx={}, len={}", idx,offset_idx_sorted.len() );
+        eprintln!("idx={}, len={}", idx, offset_idx_sorted.len());
         while idx < offset_idx_sorted.len() - 1 {
             next_offsets_indices[offset_idx_sorted[idx].0] = offset_idx_sorted[idx + 1].0;
             idx += 1;
@@ -78,7 +80,7 @@ impl<D: Digest + Send + Sync> PackedIndex<D> {
             ids,
             offsets,
             next_offsets_indices,
-            phantom: PhantomData
+            phantom: PhantomData,
         })
     }
 
@@ -95,50 +97,47 @@ impl<D: Digest + Send + Sync> PackedIndex<D> {
         loop {
             middle = ((lo + hi) >> 1) as usize;
             if middle >= len {
-                return None
+                return None;
             }
 
             match as_bytes.partial_cmp(&self.ids[middle][..]) {
                 Some(xs) => match xs {
                     std::cmp::Ordering::Less => {
                         hi = middle as u32;
-                    },
+                    }
                     std::cmp::Ordering::Greater => {
                         lo = (middle + 1) as u32;
-                    },
+                    }
                     std::cmp::Ordering::Equal => {
                         return Some((
                             self.offsets[middle],
-                            self.offsets[self.next_offsets_indices[middle]]
+                            self.offsets[self.next_offsets_indices[middle]],
                         ));
                     }
                 },
-                None => return None
+                None => return None,
             }
 
             if lo >= hi {
-                break
+                break;
             }
         }
 
         None
     }
-
 }
 
 pub struct Reader {
-    mmap: Mmap
+    mmap: Mmap,
 }
 
 impl Reader {
     pub fn new(mmap: Mmap) -> Self {
-        Reader {
-            mmap
-        }
+        Reader { mmap }
     }
 
     fn read_bounds(&self, start: u64, end: u64) -> anyhow::Result<Object<Vec<u8>>> {
-        let mut cursor = Cursor::new(&self.mmap[ .. end as usize]);
+        let mut cursor = Cursor::new(&self.mmap[..end as usize]);
         cursor.seek(SeekFrom::Start(start))?;
 
         let mut output = Vec::new();
@@ -148,7 +147,7 @@ impl Reader {
             0 => Object::Blob(output),
             1 => Object::Signature(output),
             2 => Object::Version(output),
-            _ => bail!("Unrecognized type")
+            _ => bail!("Unrecognized type"),
         })
     }
 }
@@ -156,7 +155,7 @@ impl Reader {
 pub fn packfile_read<R: BufRead, W: Write>(
     input: &mut R,
     output: &mut W,
-    read_bytes: &mut u64
+    read_bytes: &mut u64,
 ) -> anyhow::Result<u8> {
     let mut byte = [0u8; 1];
     input.read_exact(&mut byte)?;
@@ -167,7 +166,7 @@ pub fn packfile_read<R: BufRead, W: Write>(
     let mut continuation = byte[0] & 0x80;
     loop {
         if continuation < 1 {
-            break
+            break;
         }
 
         input.read_exact(&mut byte)?;
@@ -182,8 +181,8 @@ pub fn packfile_read<R: BufRead, W: Write>(
             let mut deflate_stream = ZlibDecoder::new(input);
             std::io::copy(&mut deflate_stream, output)?;
             *read_bytes = 1 + count + deflate_stream.total_in();
-            return Ok(obj_type)
-        },
+            return Ok(obj_type);
+        }
 
         _ => {
             bail!("unknown object type");
@@ -194,7 +193,7 @@ pub fn packfile_read<R: BufRead, W: Write>(
 pub struct PackedStore<D> {
     index: PackedIndex<D>,
     objects: Reader,
-    phantom: PhantomData<D>
+    phantom: PhantomData<D>,
 }
 
 impl<D: Digest + Send + Sync> PackedStore<D> {
@@ -209,7 +208,7 @@ impl<D: Digest + Send + Sync> PackedStore<D> {
         Ok(PackedStore {
             index: idx,
             objects: packfile,
-            phantom: PhantomData
+            phantom: PhantomData,
         })
     }
 }
@@ -217,26 +216,31 @@ impl<D: Digest + Send + Sync> PackedStore<D> {
 #[async_trait]
 impl<D: 'static + Digest + Send + Sync> ReadableStore for PackedStore<D> {
     type ObjectStream = PackedObjectStream<D>;
-    async fn get<T: AsRef<[u8]> + Send>(&self, item: T) -> anyhow::Result<Option<Object<Vec<u8>>>> {
+    async fn get<T: AsRef<[u8]> + Send + Sync>(
+        &self,
+        item: T,
+    ) -> anyhow::Result<Option<Object<Vec<u8>>>> {
         let bytes = item.as_ref();
         let maybe_bounds = self.index.get_bounds(bytes);
         if maybe_bounds.is_none() {
-            return Ok(None)
+            return Ok(None);
         }
 
         let (start, end) = maybe_bounds.unwrap();
         match self.objects.read_bounds(start, end) {
             Ok(x) => Ok(Some(x)),
-            Err(e) => bail!("failed")
+            Err(e) => bail!("failed"),
         }
     }
 
     async fn list(&self) -> Self::ObjectStream {
-
         unimplemented!()
     }
 
-    async fn get_stream<'a, T: AsRef<[u8]> + Send, R: Stream<Item = &'a [u8]>>(&self, item: T) -> Option<R> {
+    async fn get_stream<'a, T: AsRef<[u8]> + Send, R: Stream<Item = &'a [u8]>>(
+        &self,
+        item: T,
+    ) -> Option<R> {
         unimplemented!()
     }
 }

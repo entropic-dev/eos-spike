@@ -1,6 +1,6 @@
+pub mod errors;
 pub mod object;
 pub mod stores;
-pub mod errors;
 
 #[cfg(test)]
 mod tests {

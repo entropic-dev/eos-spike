@@ -1,23 +1,23 @@
 #![feature(async_closure)]
+use anyhow::{self, bail};
+use async_std::fs;
+use async_std::prelude::*;
+use colored::Colorize;
+use digest::Digest;
+use entropic_object_store::object::Object;
 use entropic_object_store::stores::loose::LooseStore;
 use entropic_object_store::stores::packed::PackedStore;
 use entropic_object_store::stores::{ReadableStore, WritableStore};
-use entropic_object_store::object::Object;
-use sha2::Sha256;
-use digest::Digest;
-use anyhow::{ self, bail };
-use structopt::{ StructOpt };
-use std::path::{ Path, PathBuf };
-use colored::Colorize;
-use async_std::fs;
-use async_std::prelude::*;
+use futures::future::join_all;
 use futures::prelude::*;
-use futures::future::{join_all};
+use sha2::Sha256;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use structopt::StructOpt;
 
 enum Backends {
     Loose,
-    Packed
+    Packed,
 }
 
 impl FromStr for Backends {
@@ -27,7 +27,7 @@ impl FromStr for Backends {
         match s {
             "loose" => Ok(Backends::Loose),
             "packed" => Ok(Backends::Packed),
-            s => bail!("not a recognized backed: \"{}\"", s)
+            s => bail!("not a recognized backed: \"{}\"", s),
         }
     }
 }
@@ -36,15 +36,14 @@ impl FromStr for Backends {
 enum Command {
     Add {
         #[structopt(parse(from_os_str))]
-        files: Vec<PathBuf>
+        files: Vec<PathBuf>,
     },
     Get {
         hashes: Vec<String>,
         #[structopt(short, long, default_value = "loose")]
-        backend: Backends
+        backend: Backends,
     },
-    Pack {
-    }
+    Pack {},
 }
 
 #[derive(StructOpt)]
@@ -53,34 +52,50 @@ struct Eos {
     #[structopt(short, parse(from_os_str))]
     dir: Option<PathBuf>,
     #[structopt(subcommand)]
-    command: Command
+    command: Command,
 }
 
-async fn load_file<D: Digest + Send + Sync, S: WritableStore<D>>(store: &S, file: PathBuf) -> anyhow::Result<String> {
+async fn load_file<D: Digest + Send + Sync, S: WritableStore<D>>(
+    store: &S,
+    file: PathBuf,
+) -> anyhow::Result<String> {
     match fs::read(&file).await {
-        Err(e) => {
-            Ok(format!("{} failed to read {:?}", "ERR:".black().on_red(), file))
-        },
+        Err(e) => Ok(format!(
+            "{} failed to read {:?}",
+            "ERR:".black().on_red(),
+            file
+        )),
         Ok(data) => {
             let result = match store.add(Object::Blob(data)).await {
-                Err(_e) => return Ok(format!("{} failed to write {:?}", "ERR:".black().on_red(), file)),
-                Ok(f) => f
+                Err(_e) => {
+                    return Ok(format!(
+                        "{} failed to write {:?}",
+                        "ERR:".black().on_red(),
+                        file
+                    ))
+                }
+                Ok(f) => f,
             };
 
             if result {
                 Ok(format!("{} wrote {:?}", "OK: ".white().on_green(), file))
             } else {
-                Ok(format!("{} already had {:?}", "MU: ".white().on_purple(), file))
+                Ok(format!(
+                    "{} already had {:?}",
+                    "MU: ".white().on_purple(),
+                    file
+                ))
             }
         }
     }
 }
 
-async fn cmd_add<D: Digest + Send + Sync, S: WritableStore<D>>(store: S, files: &Vec<PathBuf>) -> anyhow::Result<()> {
+async fn cmd_add<D: Digest + Send + Sync, S: WritableStore<D>>(
+    store: S,
+    files: &Vec<PathBuf>,
+) -> anyhow::Result<()> {
     let mut results = Vec::new();
-    for file in files.iter().filter_map(|file| {
-        file.canonicalize().ok()
-    }) {
+    for file in files.iter().filter_map(|file| file.canonicalize().ok()) {
         results.push(load_file(&store, file));
     }
 
@@ -92,13 +107,16 @@ async fn cmd_add<D: Digest + Send + Sync, S: WritableStore<D>>(store: S, files: 
 
 async fn cmd_get<S: ReadableStore>(store: S, hashes: &Vec<String>) -> anyhow::Result<()> {
     let cksize = Sha256::new().result().len();
-    let valid_hashes: Vec<_> = hashes.iter().filter_map(|xs| {
-        let decoded = hex::decode(xs).ok()?;
-        if decoded.len() != cksize {
-            return None
-        }
-        Some(decoded)
-    }).collect();
+    let valid_hashes: Vec<_> = hashes
+        .iter()
+        .filter_map(|xs| {
+            let decoded = hex::decode(xs).ok()?;
+            if decoded.len() != cksize {
+                return None;
+            }
+            Some(decoded)
+        })
+        .collect();
     let cleaned_hashes: Vec<_> = valid_hashes.iter().map(|xs| hex::encode(xs)).collect();
 
     let mut results = Vec::new();
@@ -114,13 +132,16 @@ async fn cmd_get<S: ReadableStore>(store: S, hashes: &Vec<String>) -> anyhow::Re
                     Some(obj) => {
                         println!("{} got {}", "OK: ".white().on_green(), obj.to_string());
                         //::std::io::Write::write_all(&mut ::std::io::stdout(), obj.bytes());
-                    },
+                    }
                     None => {
-                        println!("{} could not find that hash ({})", "MU: ".white().on_purple(), cleaned_hashes[idx]);
-
+                        println!(
+                            "{} could not find that hash ({})",
+                            "MU: ".white().on_purple(),
+                            cleaned_hashes[idx]
+                        );
                     }
                 }
-            },
+            }
             Err(_e) => {
                 dbg!(_e);
                 println!("{} error reading hash", "ERR:".white().on_red());
@@ -132,7 +153,7 @@ async fn cmd_get<S: ReadableStore>(store: S, hashes: &Vec<String>) -> anyhow::Re
 }
 
 #[async_std::main]
-async fn main () -> anyhow::Result<()> {
+async fn main() -> anyhow::Result<()> {
     let eos = Eos::from_args();
     let destination = eos.dir.unwrap_or_else(|| {
         let mut pb = dirs::home_dir().unwrap();
@@ -152,13 +173,11 @@ async fn main () -> anyhow::Result<()> {
     let loose = LooseStore::<Sha256>::new(destination);
     match &eos.command {
         Command::Add { files } => cmd_add(loose, files).await?,
-        Command::Get { hashes, backend } => {
-            match backend {
-                Backends::Loose => cmd_get(loose, hashes).await?,
-                Backends::Packed => cmd_get(packed, hashes).await?,
-            }
+        Command::Get { hashes, backend } => match backend {
+            Backends::Loose => cmd_get(loose, hashes).await?,
+            Backends::Packed => cmd_get(packed, hashes).await?,
         },
-        Command::Pack { } => loose.to_packed_store().await?
+        Command::Pack {} => loose.to_packed_store().await?,
     };
     Ok(())
 }

@@ -1,19 +1,19 @@
-use std::fmt::{ Formatter, Display, Result as FmtResult };
 use crate::errors::ObjectStoreError;
+use std::fmt::{Display, Formatter, Result as FmtResult};
 
 #[derive(Debug)]
 pub enum Object<T: AsRef<[u8]> + Send> {
     Blob(T),
     Version(T),
-    Signature(T)
+    Signature(T),
 }
 
 // impl<T: AsRef<[u8]>> FromStr for Object<T> {
 //     type Err = ObjectStoreError;
-// 
+//
 //     fn from_str(s: &str) -> Result<Self, Self::Err> {
 //         match s {
-//             "blob" => 
+//             "blob" =>
 //         }
 //     }
 // }
@@ -23,7 +23,7 @@ impl<T: AsRef<[u8]> + Send> Display for Object<T> {
         match &self {
             Object::Blob(_) => write!(f, "blob"),
             Object::Version(_) => write!(f, "vers"),
-            Object::Signature(_) => write!(f, "sign")
+            Object::Signature(_) => write!(f, "sign"),
         }
     }
 }
@@ -33,7 +33,7 @@ impl<T: AsRef<[u8]> + Send> Object<T> {
         match &self {
             Object::Blob(x) => x,
             Object::Version(x) => x,
-            Object::Signature(x) => x
+            Object::Signature(x) => x,
         }
     }
 }

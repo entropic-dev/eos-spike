@@ -1,9 +1,8 @@
 use crate::object::Object;
 use crate::stores::{ReadableStore, WritableStore};
 use anyhow::{self, bail};
-use async_std::io::prelude::*;
 use async_std::prelude::*;
-use async_std::{fs, prelude::*, stream::Stream};
+use async_std::{fs, stream::Stream};
 use async_trait::async_trait;
 use flate2::bufread::ZlibDecoder;
 use flate2::write::ZlibEncoder;
@@ -11,7 +10,6 @@ use flate2::Compression;
 use futures::future::join_all;
 use rayon::prelude::*;
 use sha2::Digest;
-use std::io::prelude::*;
 use std::io::Write;
 use std::io::{BufRead, BufReader};
 use std::marker::PhantomData;
@@ -33,10 +31,9 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
     }
 
     // https://stackoverflow.com/a/18732276
-    pub(crate) async fn estimate_count() -> usize {
-        0
-    }
-
+    // pub(crate) async fn estimate_count() -> usize {
+    //    unimplemented!()
+    // }
     pub async fn to_packed_store(&self) -> anyhow::Result<()> {
         // faster to do the dir listing synchronously
         let entries = std::fs::read_dir(&self.location)?.filter_map(|xs| {
@@ -120,7 +117,7 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
             offs += size_bytes.len();
 
             let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
-            enc.write_all(bytes);
+            enc.write_all(bytes)?;
             let finished = &enc.finish()?;
             offs += finished.len();
             fd.write_all(finished).await?;
@@ -136,7 +133,6 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
         let mut object_idx: usize = 0;
         while fanout_idx < 256 && object_idx < sorted.len() {
             while sorted[object_idx].0[0] as usize != fanout_idx {
-                let bytes = (object_idx as u32).to_be_bytes();
                 fanout[fanout_idx] = (object_idx as u32).to_be();
                 fanout_idx += 1;
                 if fanout_idx == 256 {
@@ -174,10 +170,10 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
         fd.write_all(&version[..]).await?;
         let fanout_bytes = unsafe { std::mem::transmute::<[u32; 256], [u8; 256 * 4]>(fanout) };
         fd.write_all(&fanout_bytes[..]).await?;
-        for (hash, offset) in &sorted {
+        for (hash, _) in &sorted {
             fd.write_all(&hash).await?;
         }
-        for (hash, offset) in &sorted {
+        for (_, offset) in &sorted {
             let offs_u32 = (**offset) as u32;
             fd.write_all(&offs_u32.to_be_bytes()).await?;
         }
@@ -196,7 +192,7 @@ impl<D> Stream for LooseObjectStream<D> {
     type Item = Object<Vec<u8>>;
     fn poll_next(
         self: Pin<&mut Self>,
-        cx: &mut futures::task::Context,
+        _cx: &mut futures::task::Context,
     ) -> futures::task::Poll<Option<Self::Item>> {
         unimplemented!();
     }
@@ -256,13 +252,13 @@ impl<D: 'static + Digest + Send + Sync> WritableStore<D> for LooseStore<D> {
 
     async fn add_stream<'a, S: Stream<Item = &'a [u8]> + Send>(
         &mut self,
-        item: S,
-        size_hint: Option<usize>,
+        _item: S,
+        _size_hint: Option<usize>,
     ) -> anyhow::Result<()> {
         unimplemented!()
     }
 
-    async fn remove<T: Into<D> + Send>(&mut self, item: T) -> bool {
+    async fn remove<T: Into<D> + Send>(&mut self, _item: T) -> bool {
         unimplemented!()
     }
 
@@ -307,26 +303,26 @@ impl<D: 'static + Digest + Send + Sync> ReadableStore for LooseStore<D> {
         let mut object = Vec::new();
 
         // TODO: it would be nice to do this in a thread/threadpool!
-        BufRead::read_until(&mut reader, 0x20, &mut type_vec);
-        BufRead::read_until(&mut reader, 0, &mut size_vec);
+        BufRead::read_until(&mut reader, 0x20, &mut type_vec)?;
+        BufRead::read_until(&mut reader, 0, &mut size_vec)?;
         std::io::copy(&mut reader, &mut object)?;
 
         let str_size = std::str::from_utf8(&size_vec[..])?;
         let size = str_size[..str_size.len() - 1].parse::<usize>()?;
         if object.len() != size {
-            return bail!(
+            bail!(
                 "mismatched len: got {} bytes, expected {}",
                 object.len(),
                 size
-            );
+            )
         }
 
-        return match std::str::from_utf8(&type_vec[..])? {
+        match std::str::from_utf8(&type_vec[..])? {
             "blob " => Ok(Some(Object::Blob(object))),
             "sign " => Ok(Some(Object::Signature(object))),
             "vers " => Ok(Some(Object::Version(object))),
             _ => bail!("Could not parse object type"),
-        };
+        }
     }
 
     async fn list(&self) -> Self::ObjectStream {
@@ -335,7 +331,7 @@ impl<D: 'static + Digest + Send + Sync> ReadableStore for LooseStore<D> {
 
     async fn get_stream<'a, T: AsRef<[u8]> + Send, R: Stream<Item = &'a [u8]>>(
         &self,
-        item: T,
+        _item: T,
     ) -> Option<R> {
         unimplemented!()
     }

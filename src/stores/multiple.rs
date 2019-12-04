@@ -1,9 +1,7 @@
 use crate::object::Object;
-use crate::stores::{ReadableStore, WritableStore};
-use async_std::io::prelude::*;
+use crate::stores::ReadableStore;
 use async_std::stream::Stream;
 use async_trait::async_trait;
-use digest::Digest;
 
 struct MultipleStore<R0: ReadableStore, R1: ReadableStore>(R0, R1);
 struct FusedObjectStream;
@@ -31,7 +29,7 @@ impl<R0: ReadableStore + Send + Sync, R1: ReadableStore + Send + Sync> ReadableS
 
     async fn get_stream<'a, T: AsRef<[u8]> + Send, R: Stream<Item = &'a [u8]>>(
         &self,
-        item: T,
+        _item: T,
     ) -> Option<R> {
         unimplemented!()
     }

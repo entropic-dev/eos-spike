@@ -1,7 +1,7 @@
 use crate::object::Object;
 use crate::stores::ReadableStore;
 use anyhow::{self, bail};
-use async_std::{fs, stream::Stream};
+use async_std::stream::Stream;
 use async_trait::async_trait;
 use byteorder::{BigEndian, ReadBytesExt};
 use digest::Digest;
@@ -12,7 +12,7 @@ use std::io::prelude::*;
 use std::io::Read;
 use std::io::{Cursor, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Clone)]
 pub struct PackedObjectStream<D> {
@@ -34,11 +34,11 @@ impl<D: Digest + Send + Sync> PackedIndex<D> {
         let mut version = [0u8; 4];
         input.read_exact(&mut version)?;
 
-        if (&magic != b"EIDX") {
+        if &magic != b"EIDX" {
             bail!("invalid pack index");
         }
 
-        if (version != unsafe { std::mem::transmute::<u32, [u8; 4]>(0u32.to_be()) }) {
+        if version != unsafe { std::mem::transmute::<u32, [u8; 4]>(0u32.to_be()) } {
             bail!("unsupported pack index version");
         }
 
@@ -177,11 +177,14 @@ pub fn packfile_read<R: BufRead, W: Write>(
     }
 
     match obj_type {
-        0...4 => {
+        0..=4 => {
             let mut deflate_stream = ZlibDecoder::new(input);
-            std::io::copy(&mut deflate_stream, output)?;
+            let written = std::io::copy(&mut deflate_stream, output)?;
             *read_bytes = 1 + count + deflate_stream.total_in();
-            return Ok(obj_type);
+            if written != size {
+                bail!("expected object of size {}, got object of size {}", size, written)
+            }
+            Ok(obj_type)
         }
 
         _ => {
@@ -229,7 +232,7 @@ impl<D: 'static + Digest + Send + Sync> ReadableStore for PackedStore<D> {
         let (start, end) = maybe_bounds.unwrap();
         match self.objects.read_bounds(start, end) {
             Ok(x) => Ok(Some(x)),
-            Err(e) => bail!("failed"),
+            Err(e) => bail!(e),
         }
     }
 
@@ -239,7 +242,7 @@ impl<D: 'static + Digest + Send + Sync> ReadableStore for PackedStore<D> {
 
     async fn get_stream<'a, T: AsRef<[u8]> + Send, R: Stream<Item = &'a [u8]>>(
         &self,
-        item: T,
+        _item: T,
     ) -> Option<R> {
         unimplemented!()
     }

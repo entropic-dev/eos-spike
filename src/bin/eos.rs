@@ -1,7 +1,6 @@
 #![feature(async_closure)]
 use anyhow::{self, bail};
 use async_std::fs;
-use async_std::prelude::*;
 use colored::Colorize;
 use digest::Digest;
 use entropic_object_store::object::Object;
@@ -9,9 +8,8 @@ use entropic_object_store::stores::loose::LooseStore;
 use entropic_object_store::stores::packed::PackedStore;
 use entropic_object_store::stores::{ReadableStore, WritableStore};
 use futures::future::join_all;
-use futures::prelude::*;
 use sha2::Sha256;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::str::FromStr;
 use structopt::StructOpt;
 
@@ -60,7 +58,7 @@ async fn load_file<D: Digest + Send + Sync, S: WritableStore<D>>(
     file: PathBuf,
 ) -> anyhow::Result<String> {
     match fs::read(&file).await {
-        Err(e) => Ok(format!(
+        Err(_) => Ok(format!(
             "{} failed to read {:?}",
             "ERR:".black().on_red(),
             file
@@ -92,7 +90,7 @@ async fn load_file<D: Digest + Send + Sync, S: WritableStore<D>>(
 
 async fn cmd_add<D: Digest + Send + Sync, S: WritableStore<D>>(
     store: S,
-    files: &Vec<PathBuf>,
+    files: &[PathBuf],
 ) -> anyhow::Result<()> {
     let mut results = Vec::new();
     for file in files.iter().filter_map(|file| file.canonicalize().ok()) {
@@ -105,7 +103,7 @@ async fn cmd_add<D: Digest + Send + Sync, S: WritableStore<D>>(
     Ok(())
 }
 
-async fn cmd_get<S: ReadableStore>(store: S, hashes: &Vec<String>) -> anyhow::Result<()> {
+async fn cmd_get<S: ReadableStore>(store: S, hashes: &[String]) -> anyhow::Result<()> {
     let cksize = Sha256::new().result().len();
     let valid_hashes: Vec<_> = hashes
         .iter()
@@ -117,7 +115,7 @@ async fn cmd_get<S: ReadableStore>(store: S, hashes: &Vec<String>) -> anyhow::Re
             Some(decoded)
         })
         .collect();
-    let cleaned_hashes: Vec<_> = valid_hashes.iter().map(|xs| hex::encode(xs)).collect();
+    let cleaned_hashes: Vec<_> = valid_hashes.iter().map(hex::encode).collect();
 
     let mut results = Vec::new();
     for hash in valid_hashes {

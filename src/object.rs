@@ -1,4 +1,3 @@
-use crate::errors::ObjectStoreError;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
 #[derive(Debug)]

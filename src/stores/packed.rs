@@ -222,45 +222,17 @@ impl<D: Digest + Send + Sync> PackedStore<D> {
             let dent = xs.ok()?;
             let os_filename = dent.file_name();
             let filename = os_filename.to_string_lossy();
-            if filename.len() < 5 {
+            if filename.len() < 4 {
                 return None
             }
 
-            let is_idx = &filename[filename.len() - 4..] == ".idx";
-            let is_pack = !is_idx && &filename[filename.len() - 5..] == ".pack";
-
-            if is_idx == false && is_pack == false {
+            if &filename[filename.len() - 4..] != ".idx" {
                 return None
             }
 
-            let file_type = dent.file_type().ok()?;
-            if !file_type.is_file() {
-                return None
-            }
-
-            Some((if is_idx {
-                filename.replace(".idx", "")
-            } else {
-                filename.replace(".pack", "")
-            }, dent.path(), is_pack))
-        }).fold(HashMap::new(), |mut folded, (filename, path, is_pack)| {
-            let paths = folded.entry(filename).or_insert(Vec::new());
-            if paths.len() > 0 {
-                if is_pack {
-                    paths.push(path);
-                } else {
-                    paths.insert(0, path);
-                }
-            } else {
-                paths.push(path);
-            }
-            folded
-        }).iter().filter_map(|(_filename, paths)| {
-            if paths.len() != 2 {
-                return None
-            }
-
-            Self::new(&paths[1], &paths[0]).ok()
+            let mut loc = pb.clone();
+            loc.push(filename.replace(".idx", ".pack"));
+            Self::new(&loc, &dent.path()).ok()
         }).collect())
     }
 }

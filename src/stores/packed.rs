@@ -10,9 +10,10 @@ use memmap::{Mmap, MmapOptions};
 use std;
 use std::io::prelude::*;
 use std::io::Read;
+use std::collections::HashMap;
 use std::io::{Cursor, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
-use std::path::Path;
+use std::path::{ Path, PathBuf };
 
 #[derive(Clone)]
 pub struct PackedObjectStream<D> {
@@ -69,7 +70,6 @@ impl<D: Digest + Send + Sync> PackedIndex<D> {
         offset_idx_sorted.sort_by_key(|(_, offset)| *offset);
         let mut next_offsets_indices = vec![0; offset_idx_sorted.len()];
         let mut idx = 0;
-        eprintln!("idx={}, len={}", idx, offset_idx_sorted.len());
         while idx < offset_idx_sorted.len() - 1 {
             next_offsets_indices[offset_idx_sorted[idx].0] = offset_idx_sorted[idx + 1].0;
             idx += 1;
@@ -213,6 +213,55 @@ impl<D: Digest + Send + Sync> PackedStore<D> {
             objects: packfile,
             phantom: PhantomData,
         })
+    }
+
+    pub fn load_all<T: AsRef<Path>>(dir: T) -> anyhow::Result<Vec<Self>> {
+        let mut pb = PathBuf::from(dir.as_ref());
+        pb.push("pack");
+        Ok(std::fs::read_dir(&pb)?.filter_map(|xs| {
+            let dent = xs.ok()?;
+            let os_filename = dent.file_name();
+            let filename = os_filename.to_string_lossy();
+            if filename.len() < 5 {
+                return None
+            }
+
+            let is_idx = &filename[filename.len() - 4..] == ".idx";
+            let is_pack = !is_idx && &filename[filename.len() - 5..] == ".pack";
+
+            if is_idx == false && is_pack == false {
+                return None
+            }
+
+            let file_type = dent.file_type().ok()?;
+            if !file_type.is_file() {
+                return None
+            }
+
+            Some((if is_idx {
+                filename.replace(".idx", "")
+            } else {
+                filename.replace(".pack", "")
+            }, dent.path(), is_pack))
+        }).fold(HashMap::new(), |mut folded, (filename, path, is_pack)| {
+            let paths = folded.entry(filename).or_insert(Vec::new());
+            if paths.len() > 0 {
+                if is_pack {
+                    paths.push(path);
+                } else {
+                    paths.insert(0, path);
+                }
+            } else {
+                paths.push(path);
+            }
+            folded
+        }).iter().filter_map(|(_filename, paths)| {
+            if paths.len() != 2 {
+                return None
+            }
+
+            Self::new(&paths[1], &paths[0]).ok()
+        }).collect())
     }
 }
 

@@ -159,21 +159,15 @@ async fn main() -> anyhow::Result<()> {
         pb
     });
 
-    let mut packfile = destination.clone();
-    let mut packindex = destination.clone();
-    packfile.push("tmp");
-    packfile.push("tmp-4700-pack");
-    packindex.push("tmp");
-    packindex.push("tmp-4700-idx");
 
-    let packed = PackedStore::<Sha256>::new(packfile, packindex)?;
-
+    let packfiles = PackedStore::<Sha256>::load_all(&destination)?;
     let loose = LooseStore::<Sha256>::new(destination);
+
     match &eos.command {
         Command::Add { files } => cmd_add(loose, files).await?,
         Command::Get { hashes, backend } => match backend {
             Backends::Loose => cmd_get(loose, hashes).await?,
-            Backends::Packed => cmd_get(packed, hashes).await?,
+            Backends::Packed => cmd_get(packfiles, hashes).await?,
         },
         Command::Pack {} => loose.to_packed_store().await?,
     };

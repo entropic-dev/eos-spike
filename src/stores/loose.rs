@@ -178,6 +178,14 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
             fd.write_all(&offs_u32.to_be_bytes()).await?;
         }
 
+        let mut dest = self.location.clone();
+        dest.push("pack");
+        let mut packdest = dest.clone();
+        let mut idxdest = dest;
+        packdest.push(format!("{}.pack", std::process::id()));
+        idxdest.push(format!("{}.idx", std::process::id()));
+        fs::rename(&tmp, packdest).await?;
+        fs::rename(&tmpidx, idxdest).await?;
         Ok(())
     }
 }

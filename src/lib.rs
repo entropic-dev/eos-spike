@@ -2,6 +2,16 @@ pub mod errors;
 pub mod object;
 pub mod stores;
 
+pub trait PackageArg {
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AliasArg<T: PackageArg + Clone + std::fmt::Debug + Eq + PartialEq> {
+    name: String,
+    package: T
+}
+impl<T: PackageArg + Clone + std::fmt::Debug + Eq + PartialEq> PackageArg for AliasArg<T> {}
+
 #[cfg(test)]
 mod tests {
     #[test]

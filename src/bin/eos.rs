@@ -1,6 +1,6 @@
 #![feature(async_closure)]
 use anyhow::{self, bail};
-use async_std::fs;
+use async_std::{ fs, io };
 use colored::Colorize;
 use digest::Digest;
 use entropic_object_store::object::Object;
@@ -12,6 +12,8 @@ use sha2::Sha256;
 use std::path::PathBuf;
 use std::str::FromStr;
 use structopt::StructOpt;
+use async_std::io::prelude::*;
+use futures::future::FutureExt;
 
 enum Backends {
     Loose,
@@ -58,7 +60,7 @@ struct Eos {
     command: Command,
 }
 
-async fn load_file<D: Digest + Send + Sync, S: WritableStore<D>>(
+async fn load_file<D: Digest + Send + Sync, S: WritableStore<D> + Send + Sync>(
     store: &S,
     file: PathBuf,
 ) -> anyhow::Result<String> {
@@ -93,18 +95,27 @@ async fn load_file<D: Digest + Send + Sync, S: WritableStore<D>>(
     }
 }
 
-async fn cmd_add<D: Digest + Send + Sync, S: WritableStore<D>>(
+async fn cmd_add<D: Digest + Send + Sync, S: WritableStore<D> + Send + Sync>(
     store: S,
-    files: &[PathBuf],
+    mut files: &[PathBuf],
 ) -> anyhow::Result<()> {
-    let mut results = Vec::new();
+
+    let mut pending = Vec::new();
     for file in files.iter().filter_map(|file| file.canonicalize().ok()) {
-        results.push(load_file(&store, file));
+        pending.push(load_file(&store, file).boxed());
     }
 
-    for output in join_all(results).await {
-        println!("{}", output?);
+    let mut concurrent = pending.split_off(if pending.len() >= 1024 { pending.len() - 1024 } else { 0 });
+
+    while concurrent.len() > 0 {
+        let (result, idx, rest) = select_all(concurrent).await;
+        println!("{}", result?);
+        concurrent = rest;
+        if let Some(popped) = pending.pop() {
+            concurrent.push(popped);
+        }
     }
+
     Ok(())
 }
 
@@ -128,7 +139,7 @@ async fn cmd_get<S: ReadableStore, T: AsRef<str>>(store: S, hashes: &[T]) -> any
     }
 
     let mut results = Vec::with_capacity(pending.len());
-    let mut concurrent = pending.split_off(if pending.len() >= 2048 { pending.len() - 2048 } else { 0 });
+    let mut concurrent = pending.split_off(if pending.len() >= 1024 { pending.len() - 1024 } else { 0 });
 
     while pending.len() > 0 {
         let (result, idx, rest) = select_all(concurrent).await;
@@ -178,12 +189,21 @@ async fn main() -> anyhow::Result<()> {
         pb
     });
 
-
     let packfiles = PackedStore::<Sha256>::load_all(&destination)?;
     let loose = LooseStore::<Sha256>::new(destination);
 
     match &eos.command {
-        Command::Add { files } => cmd_add(loose, files).await?,
+        Command::Add { files } => {
+            let mut processed_files = Vec::new();
+            if files.len() == 1 && files[0].to_string_lossy() == "-" {
+                let mut data = Vec::new();
+                io::stdin().read_to_end(&mut data).await?;
+                processed_files = std::str::from_utf8(&data)?.trim().split("\n").map(|xs| PathBuf::from(xs)).collect()
+            } else {
+                processed_files = files.clone();
+            }
+            cmd_add(loose, &processed_files).await?
+        },
         Command::Get { hashes, backend } => match backend {
             Backends::Loose => cmd_get(loose, &hashes[..]).await?,
             Backends::Packed => cmd_get(packfiles, &hashes[..]).await?,

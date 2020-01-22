@@ -4,7 +4,7 @@ use std::fmt::{Display, Formatter, Result as FmtResult};
 pub enum Object<T: AsRef<[u8]> + Send> {
     Blob(T),
     Version(T),
-    Signature(T),
+    Event(T),
 }
 
 // impl<T: AsRef<[u8]>> FromStr for Object<T> {
@@ -22,7 +22,7 @@ impl<T: AsRef<[u8]> + Send> Display for Object<T> {
         match &self {
             Object::Blob(_) => write!(f, "blob"),
             Object::Version(_) => write!(f, "vers"),
-            Object::Signature(_) => write!(f, "sign"),
+            Object::Event(_) => write!(f, "sign"),
         }
     }
 }
@@ -32,7 +32,7 @@ impl<T: AsRef<[u8]> + Send> Object<T> {
         match &self {
             Object::Blob(x) => x,
             Object::Version(x) => x,
-            Object::Signature(x) => x,
+            Object::Event(x) => x,
         }
     }
 }

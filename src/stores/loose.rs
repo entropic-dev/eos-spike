@@ -98,7 +98,7 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
             let obj = self.get(hash).await?.unwrap();
             let (typ, bytes) = match &obj {
                 Object::Blob(bytes) => (0u8, bytes),
-                Object::Signature(bytes) => (1u8, bytes),
+                Object::Event(bytes) => (1u8, bytes),
                 Object::Version(bytes) => (2u8, bytes),
             };
             let mut size = bytes.len();
@@ -327,7 +327,7 @@ impl<D: 'static + Digest + Send + Sync> ReadableStore for LooseStore<D> {
 
         match std::str::from_utf8(&type_vec[..])? {
             "blob " => Ok(Some(Object::Blob(object))),
-            "sign " => Ok(Some(Object::Signature(object))),
+            "sign " => Ok(Some(Object::Event(object))),
             "vers " => Ok(Some(Object::Version(object))),
             _ => bail!("Could not parse object type"),
         }

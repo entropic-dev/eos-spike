@@ -145,7 +145,7 @@ impl Reader {
 
         Ok(match packfile_type {
             0 => Object::Blob(output),
-            1 => Object::Signature(output),
+            1 => Object::Event(output),
             2 => Object::Version(output),
             _ => bail!("Unrecognized type"),
         })

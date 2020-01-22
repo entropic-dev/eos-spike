@@ -35,11 +35,14 @@ Prior art:
     - dependencies
     - creation date
     - files (a map of files at versions)
-- **Signatures:** signatures over a version
+- **Event:** Cryptographically signed event representing a package mutation
     - version
     - date
-    - signature
-    - origin? publickey?
+    - origin
+    - auth add
+    - auth rm
+    - yank a version
+    - unyank a version
 
 ## Mutable:
 

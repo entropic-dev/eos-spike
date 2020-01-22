@@ -33,3 +33,7 @@ features = ["attributes"]
 [[bin]]
 name = "eos"
 path = "src/bin/eos.rs"
+
+[[bin]]
+name = "sign"
+path = "src/bin/sign.rs"

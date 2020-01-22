@@ -1,6 +1,7 @@
 pub mod errors;
 pub mod object;
 pub mod stores;
+pub mod objects;
 
 pub trait PackageArg {
 }

@@ -10,7 +10,6 @@ use memmap::{Mmap, MmapOptions};
 use std;
 use std::io::prelude::*;
 use std::io::Read;
-use std::collections::HashMap;
 use std::io::{Cursor, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
 use std::path::{ Path, PathBuf };

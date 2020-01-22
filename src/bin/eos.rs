@@ -97,7 +97,7 @@ async fn load_file<D: Digest + Send + Sync, S: WritableStore<D> + Send + Sync>(
 
 async fn cmd_add<D: Digest + Send + Sync, S: WritableStore<D> + Send + Sync>(
     store: S,
-    mut files: &[PathBuf],
+    files: &[PathBuf],
 ) -> anyhow::Result<()> {
 
     let mut pending = Vec::new();
@@ -108,7 +108,7 @@ async fn cmd_add<D: Digest + Send + Sync, S: WritableStore<D> + Send + Sync>(
     let mut concurrent = pending.split_off(if pending.len() >= 1024 { pending.len() - 1024 } else { 0 });
 
     while concurrent.len() > 0 {
-        let (result, idx, rest) = select_all(concurrent).await;
+        let (result, _idx, rest) = select_all(concurrent).await;
         println!("{}", result?);
         concurrent = rest;
         if let Some(popped) = pending.pop() {
@@ -142,7 +142,7 @@ async fn cmd_get<S: ReadableStore, T: AsRef<str>>(store: S, hashes: &[T]) -> any
     let mut concurrent = pending.split_off(if pending.len() >= 1024 { pending.len() - 1024 } else { 0 });
 
     while pending.len() > 0 {
-        let (result, idx, rest) = select_all(concurrent).await;
+        let (result, _idx, rest) = select_all(concurrent).await;
         results.push(result);
         concurrent = rest;
         if let Some(popped) = pending.pop() {
@@ -194,7 +194,7 @@ async fn main() -> anyhow::Result<()> {
 
     match &eos.command {
         Command::Add { files } => {
-            let mut processed_files = Vec::new();
+            let processed_files;
             if files.len() == 1 && files[0].to_string_lossy() == "-" {
                 let mut data = Vec::new();
                 io::stdin().read_to_end(&mut data).await?;

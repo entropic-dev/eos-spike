@@ -9,7 +9,7 @@ edition = "2018"
 [dependencies]
 async-trait = "0.1.17"
 anyhow = "1.0.22"
-thiserror = "1.0.6"
+thiserror = "1.0.9"
 sha2 = "0.8.0"
 base64 = "0.11.0"
 digest = "0.8.0"

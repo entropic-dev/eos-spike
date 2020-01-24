@@ -6,6 +6,29 @@ use async_trait::async_trait;
 pub struct FusedObjectStream;
 
 #[async_trait]
+impl ReadableStore for () {
+    type ObjectStream = FusedObjectStream;
+
+    async fn get<T: AsRef<[u8]> + Send + Sync>(
+        &self,
+        item: T,
+    ) -> anyhow::Result<Option<Object<Vec<u8>>>> {
+        Ok(None)
+    }
+
+    async fn list(&self) -> Self::ObjectStream {
+        unimplemented!()
+    }
+
+    async fn get_stream<'a, T: AsRef<[u8]> + Send, R: Stream<Item = &'a [u8]>>(
+        &self,
+        _item: T,
+    ) -> Option<R> {
+        unimplemented!()
+    }
+}
+
+#[async_trait]
 impl<R0: ReadableStore + Send + Sync, R1: ReadableStore + Send + Sync> ReadableStore
     for (R0, R1)
 {

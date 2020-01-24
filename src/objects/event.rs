@@ -307,7 +307,11 @@ impl Event {
 
         written += write_varint(destination, self.claims.len() as u64)?;
         for claim in self.claims.iter() {
-            written += claim.to_bytes(destination)?;
+            let mut buf = Vec::new();
+            claim.to_bytes(&mut buf)?;
+            written += write_varint(destination, buf.len() as u64)?;
+            destination.write_all(&buf[..]);
+            written += buf.len();
         }
 
         let signatory_slice = self.signatory.as_bytes();

@@ -423,6 +423,11 @@ impl EventBuilder {
     }
 }
 
+pub struct EventIterator<'a, R: ReadableStore> {
+    store: &'a R,
+    seen: HashSet<[u8; 32]>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

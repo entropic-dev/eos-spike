@@ -2,7 +2,9 @@ use crate::object::Object;
 use crate::stores::{ReadableStore, WritableStore};
 use anyhow::{self, bail};
 use async_std::prelude::*;
-use async_std::{fs, stream::Stream};
+use std::io::Read;
+use async_std::{fs as afs, stream::Stream};
+use std::fs;
 use async_trait::async_trait;
 use flate2::bufread::ZlibDecoder;
 use flate2::write::ZlibEncoder;
@@ -36,7 +38,7 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
     // }
     pub async fn to_packed_store(&self) -> anyhow::Result<()> {
         // faster to do the dir listing synchronously
-        let entries = std::fs::read_dir(&self.location)?.filter_map(|xs| {
+        let entries = fs::read_dir(&self.location)?.filter_map(|xs| {
             let dent = xs.ok()?;
             let filename = dent.file_name();
             let name = filename.to_string_lossy();
@@ -50,7 +52,7 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
         let mut results = Vec::new();
         for path in entries {
             results.push(async_std::task::spawn(async move {
-                let mut entries = fs::read_dir(&path).await.ok()?;
+                let mut entries = afs::read_dir(&path).await.ok()?;
                 let mut items = Vec::new();
                 while let Some(res) = entries.next().await {
                     let entry = res.ok()?;
@@ -81,7 +83,7 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
         tmp.push("tmp");
         tmp.push(format!("tmp-{}-pack", std::process::id()));
         // place the bytes on disk
-        let mut fd = fs::OpenOptions::new()
+        let mut fd = afs::OpenOptions::new()
             .create(true)
             .write(true)
             .open(&tmp)
@@ -160,7 +162,7 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
         tmpidx.push("tmp");
         tmpidx.push(format!("tmp-{}-idx", std::process::id()));
         // place the bytes on disk
-        let mut fd = fs::OpenOptions::new()
+        let mut fd = afs::OpenOptions::new()
             .create(true)
             .write(true)
             .open(&tmpidx)
@@ -184,8 +186,8 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
         let mut idxdest = dest;
         packdest.push(format!("{}.pack", std::process::id()));
         idxdest.push(format!("{}.idx", std::process::id()));
-        fs::rename(&tmp, packdest).await?;
-        fs::rename(&tmpidx, idxdest).await?;
+        afs::rename(&tmp, packdest).await?;
+        afs::rename(&tmpidx, idxdest).await?;
         Ok(())
     }
 }
@@ -218,14 +220,14 @@ impl<D: 'static + Digest + Send + Sync> WritableStore<D> for LooseStore<D> {
         let bytes_encoded = hex::encode(bytes);
         let mut loc = self.location.clone();
         loc.push(&bytes_encoded[0..2]);
-        if let Err(e) = fs::create_dir(&loc).await {
+        if let Err(e) = afs::create_dir(&loc).await {
             match e.kind() {
                 std::io::ErrorKind::AlreadyExists => {}
                 _ => bail!(e),
             }
         }
         loc.push(&bytes_encoded[2..]);
-        match fs::OpenOptions::new()
+        match afs::OpenOptions::new()
             .read(true)
             .create(false)
             .open(&loc)
@@ -243,7 +245,7 @@ impl<D: 'static + Digest + Send + Sync> WritableStore<D> for LooseStore<D> {
         tmp.push("tmp");
         tmp.push(format!("loose-{}-{}", std::process::id(), bytes_encoded));
         // place the bytes on disk
-        let mut fd = fs::OpenOptions::new()
+        let mut fd = afs::OpenOptions::new()
             .create(true)
             .write(true)
             .open(&tmp)
@@ -254,7 +256,7 @@ impl<D: 'static + Digest + Send + Sync> WritableStore<D> for LooseStore<D> {
         enc.write_all(item)?;
         fd.write_all(&enc.finish()?).await?;
         fd.sync_data().await?;
-        fs::rename(&tmp, loc).await?;
+        afs::rename(&tmp, loc).await?;
         Ok(true)
     }
 
@@ -279,6 +281,59 @@ impl<D: 'static + Digest + Send + Sync> WritableStore<D> for LooseStore<D> {
 impl<D: 'static + Digest + Send + Sync> ReadableStore for LooseStore<D> {
     type ObjectStream = LooseObjectStream<D>;
 
+    fn get_sync<T: AsRef<[u8]> + Send + Sync>(
+        &self,
+        item: T
+    ) -> anyhow::Result<Option<Object<Vec<u8>>>> {
+        let bytes = item.as_ref();
+        let bytes_encoded = hex::encode(bytes);
+        let mut loc = self.location.clone();
+        loc.push(&bytes_encoded[0..2]);
+        loc.push(&bytes_encoded[2..]);
+        let mut fd = match fs::OpenOptions::new()
+            .read(true)
+            .create(false)
+            .open(&loc)
+        {
+            Ok(f) => f,
+            Err(e) => {
+                if std::io::ErrorKind::NotFound != e.kind() {
+                    bail!(e);
+                }
+                return Ok(None);
+            }
+        };
+
+        let mut data = Vec::new();
+        fd.read_to_end(&mut data)?;
+        let mut reader = BufReader::new(ZlibDecoder::new(BufReader::new(&data[..])));
+        let mut type_vec = Vec::new();
+        let mut size_vec = Vec::new();
+        let mut object = Vec::new();
+
+        // TODO: it would be nice to do this in a thread/threadpool!
+        BufRead::read_until(&mut reader, 0x20, &mut type_vec)?;
+        BufRead::read_until(&mut reader, 0, &mut size_vec)?;
+        std::io::copy(&mut reader, &mut object)?;
+
+        let str_size = std::str::from_utf8(&size_vec[..])?;
+        let size = str_size[..str_size.len() - 1].parse::<usize>()?;
+        if object.len() != size {
+            bail!(
+                "mismatched len: got {} bytes, expected {}",
+                object.len(),
+                size
+            )
+        }
+
+        match std::str::from_utf8(&type_vec[..])? {
+            "blob " => Ok(Some(Object::Blob(object))),
+            "sign " => Ok(Some(Object::Event(object))),
+            "vers " => Ok(Some(Object::Version(object))),
+            _ => bail!("Could not parse object type"),
+        }
+    }
+
     async fn get<T: AsRef<[u8]> + Send + Sync>(
         &self,
         item: T,
@@ -288,7 +343,7 @@ impl<D: 'static + Digest + Send + Sync> ReadableStore for LooseStore<D> {
         let mut loc = self.location.clone();
         loc.push(&bytes_encoded[0..2]);
         loc.push(&bytes_encoded[2..]);
-        let mut fd = match fs::OpenOptions::new()
+        let mut fd = match afs::OpenOptions::new()
             .read(true)
             .create(false)
             .open(&loc)

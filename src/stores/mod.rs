@@ -36,6 +36,12 @@ pub trait ReadableStore {
         &self,
         item: T,
     ) -> anyhow::Result<Option<Object<Vec<u8>>>>;
+
+    fn get_sync<T: AsRef<[u8]> + Send + Sync>(
+        &self,
+        item: T
+    ) -> anyhow::Result<Option<Object<Vec<u8>>>>;
+
     async fn list(&self) -> Self::ObjectStream;
     async fn get_stream<'a, T: AsRef<[u8]> + Send, R: Stream<Item = &'a [u8]>>(
         &self,

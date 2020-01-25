@@ -8,6 +8,12 @@ pub struct FusedObjectStream;
 #[async_trait]
 impl ReadableStore for () {
     type ObjectStream = FusedObjectStream;
+    fn get_sync<T: AsRef<[u8]> + Send + Sync>(
+        &self,
+        item: T
+    ) -> anyhow::Result<Option<Object<Vec<u8>>>> {
+        Ok(None)
+    }
 
     async fn get<T: AsRef<[u8]> + Send + Sync>(
         &self,
@@ -33,6 +39,16 @@ impl<R0: ReadableStore + Send + Sync, R1: ReadableStore + Send + Sync> ReadableS
     for (R0, R1)
 {
     type ObjectStream = FusedObjectStream;
+    fn get_sync<T: AsRef<[u8]> + Send + Sync>(
+        &self,
+        item: T
+    ) -> anyhow::Result<Option<Object<Vec<u8>>>> {
+        if let Some(obj) = self.0.get_sync(item.as_ref())? {
+            Ok(Some(obj))
+        } else {
+            self.1.get_sync(item.as_ref())
+        }
+    }
 
     async fn get<T: AsRef<[u8]> + Send + Sync>(
         &self,
@@ -62,6 +78,18 @@ impl<Reader: ReadableStore + Send + Sync> ReadableStore
     for Vec<Reader>
 {
     type ObjectStream = FusedObjectStream;
+    fn get_sync<T: AsRef<[u8]> + Send + Sync>(
+        &self,
+        item: T
+    ) -> anyhow::Result<Option<Object<Vec<u8>>>> {
+        for store in self {
+            if let Some(obj) = store.get_sync(item.as_ref())? {
+                return Ok(Some(obj))
+            }
+        }
+        Ok(None)
+    }
+
 
     async fn get<T: AsRef<[u8]> + Send + Sync>(
         &self,

@@ -239,6 +239,23 @@ impl<D: Digest + Send + Sync> PackedStore<D> {
 #[async_trait]
 impl<D: 'static + Digest + Send + Sync> ReadableStore for PackedStore<D> {
     type ObjectStream = PackedObjectStream<D>;
+    fn get_sync<T: AsRef<[u8]> + Send + Sync>(
+        &self,
+        item: T,
+    ) -> anyhow::Result<Option<Object<Vec<u8>>>> {
+        let bytes = item.as_ref();
+        let maybe_bounds = self.index.get_bounds(bytes);
+        if maybe_bounds.is_none() {
+            return Ok(None);
+        }
+
+        let (start, end) = maybe_bounds.unwrap();
+        match self.objects.read_bounds(start, end) {
+            Ok(x) => Ok(Some(x)),
+            Err(e) => bail!(e),
+        }
+    }
+
     async fn get<T: AsRef<[u8]> + Send + Sync>(
         &self,
         item: T,

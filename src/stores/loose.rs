@@ -2,9 +2,7 @@ use crate::envelope::Envelope;
 use crate::stores::{ReadableStore, WritableStore};
 use anyhow::{self, bail};
 use async_std::prelude::*;
-use std::io::Read;
 use async_std::{fs as afs, stream::Stream};
-use std::fs;
 use async_trait::async_trait;
 use flate2::bufread::ZlibDecoder;
 use flate2::write::ZlibEncoder;
@@ -12,6 +10,8 @@ use flate2::Compression;
 use futures::future::join_all;
 use rayon::prelude::*;
 use sha2::Digest;
+use std::fs;
+use std::io::Read;
 use std::io::Write;
 use std::io::{BufRead, BufReader};
 use std::marker::PhantomData;
@@ -283,18 +283,14 @@ impl<D: 'static + Digest + Send + Sync> ReadableStore for LooseStore<D> {
 
     fn get_sync<T: AsRef<[u8]> + Send + Sync>(
         &self,
-        item: T
+        item: T,
     ) -> anyhow::Result<Option<Envelope<Vec<u8>>>> {
         let bytes = item.as_ref();
         let bytes_encoded = hex::encode(bytes);
         let mut loc = self.location.clone();
         loc.push(&bytes_encoded[0..2]);
         loc.push(&bytes_encoded[2..]);
-        let mut fd = match fs::OpenOptions::new()
-            .read(true)
-            .create(false)
-            .open(&loc)
-        {
+        let mut fd = match fs::OpenOptions::new().read(true).create(false).open(&loc) {
             Ok(f) => f,
             Err(e) => {
                 if std::io::ErrorKind::NotFound != e.kind() {

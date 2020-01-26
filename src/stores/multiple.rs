@@ -10,7 +10,7 @@ impl ReadableStore for () {
     type EnvelopeStream = FusedEnvelopeStream;
     fn get_sync<T: AsRef<[u8]> + Send + Sync>(
         &self,
-        item: T
+        item: T,
     ) -> anyhow::Result<Option<Envelope<Vec<u8>>>> {
         Ok(None)
     }
@@ -35,13 +35,11 @@ impl ReadableStore for () {
 }
 
 #[async_trait]
-impl<R0: ReadableStore + Send + Sync, R1: ReadableStore + Send + Sync> ReadableStore
-    for (R0, R1)
-{
+impl<R0: ReadableStore + Send + Sync, R1: ReadableStore + Send + Sync> ReadableStore for (R0, R1) {
     type EnvelopeStream = FusedEnvelopeStream;
     fn get_sync<T: AsRef<[u8]> + Send + Sync>(
         &self,
-        item: T
+        item: T,
     ) -> anyhow::Result<Option<Envelope<Vec<u8>>>> {
         if let Some(obj) = self.0.get_sync(item.as_ref())? {
             Ok(Some(obj))
@@ -74,22 +72,19 @@ impl<R0: ReadableStore + Send + Sync, R1: ReadableStore + Send + Sync> ReadableS
 }
 
 #[async_trait]
-impl<Reader: ReadableStore + Send + Sync> ReadableStore
-    for Vec<Reader>
-{
+impl<Reader: ReadableStore + Send + Sync> ReadableStore for Vec<Reader> {
     type EnvelopeStream = FusedEnvelopeStream;
     fn get_sync<T: AsRef<[u8]> + Send + Sync>(
         &self,
-        item: T
+        item: T,
     ) -> anyhow::Result<Option<Envelope<Vec<u8>>>> {
         for store in self {
             if let Some(obj) = store.get_sync(item.as_ref())? {
-                return Ok(Some(obj))
+                return Ok(Some(obj));
             }
         }
         Ok(None)
     }
-
 
     async fn get<T: AsRef<[u8]> + Send + Sync>(
         &self,
@@ -97,7 +92,7 @@ impl<Reader: ReadableStore + Send + Sync> ReadableStore
     ) -> anyhow::Result<Option<Envelope<Vec<u8>>>> {
         for store in self {
             if let Some(obj) = store.get(item.as_ref()).await? {
-                return Ok(Some(obj))
+                return Ok(Some(obj));
             }
         }
         Ok(None)

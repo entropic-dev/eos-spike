@@ -1,19 +1,19 @@
 #![feature(async_closure)]
 use anyhow::{self, bail};
-use async_std::{ fs, io };
+use async_std::io::prelude::*;
+use async_std::{fs, io};
 use colored::Colorize;
 use digest::Digest;
 use entropic_object_store::envelope::Envelope;
 use entropic_object_store::stores::loose::LooseStore;
 use entropic_object_store::stores::packed::PackedStore;
 use entropic_object_store::stores::{ReadableStore, WritableStore};
-use futures::future::{ select_all, join_all };
+use futures::future::FutureExt;
+use futures::future::{join_all, select_all};
 use sha2::Sha256;
 use std::path::PathBuf;
 use std::str::FromStr;
 use structopt::StructOpt;
-use async_std::io::prelude::*;
-use futures::future::FutureExt;
 
 enum Backends {
     Loose,
@@ -99,13 +99,16 @@ async fn cmd_add<D: Digest + Send + Sync, S: WritableStore<D> + Send + Sync>(
     store: S,
     files: &[PathBuf],
 ) -> anyhow::Result<()> {
-
     let mut pending = Vec::new();
     for file in files.iter().filter_map(|file| file.canonicalize().ok()) {
         pending.push(load_file(&store, file).boxed());
     }
 
-    let mut concurrent = pending.split_off(if pending.len() >= 1024 { pending.len() - 1024 } else { 0 });
+    let mut concurrent = pending.split_off(if pending.len() >= 1024 {
+        pending.len() - 1024
+    } else {
+        0
+    });
 
     while concurrent.len() > 0 {
         let (result, _idx, rest) = select_all(concurrent).await;
@@ -139,7 +142,11 @@ async fn cmd_get<S: ReadableStore, T: AsRef<str>>(store: S, hashes: &[T]) -> any
     }
 
     let mut results = Vec::with_capacity(pending.len());
-    let mut concurrent = pending.split_off(if pending.len() >= 1024 { pending.len() - 1024 } else { 0 });
+    let mut concurrent = pending.split_off(if pending.len() >= 1024 {
+        pending.len() - 1024
+    } else {
+        0
+    });
 
     while pending.len() > 0 {
         let (result, _idx, rest) = select_all(concurrent).await;
@@ -198,12 +205,16 @@ async fn main() -> anyhow::Result<()> {
             if files.len() == 1 && files[0].to_string_lossy() == "-" {
                 let mut data = Vec::new();
                 io::stdin().read_to_end(&mut data).await?;
-                processed_files = std::str::from_utf8(&data)?.trim().split("\n").map(|xs| PathBuf::from(xs)).collect()
+                processed_files = std::str::from_utf8(&data)?
+                    .trim()
+                    .split("\n")
+                    .map(|xs| PathBuf::from(xs))
+                    .collect()
             } else {
                 processed_files = files.clone();
             }
             cmd_add(loose, &processed_files).await?
-        },
+        }
         Command::Get { hashes, backend } => match backend {
             Backends::Loose => cmd_get(loose, &hashes[..]).await?,
             Backends::Packed => cmd_get(packfiles, &hashes[..]).await?,
@@ -215,7 +226,7 @@ async fn main() -> anyhow::Result<()> {
                 Backends::Loose => cmd_get(loose, &hashes[..]).await?,
                 Backends::Packed => cmd_get(packfiles, &hashes[..]).await?,
             }
-        },
+        }
         Command::Pack {} => loose.to_packed_store().await?,
     };
     Ok(())

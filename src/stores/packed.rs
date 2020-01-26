@@ -12,7 +12,7 @@ use std::io::prelude::*;
 use std::io::Read;
 use std::io::{Cursor, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
-use std::path::{ Path, PathBuf };
+use std::path::{Path, PathBuf};
 
 #[derive(Clone)]
 pub struct PackedEnvelopeStream<D> {
@@ -181,7 +181,11 @@ pub fn packfile_read<R: BufRead, W: Write>(
             let written = std::io::copy(&mut deflate_stream, output)?;
             *read_bytes = 1 + count + deflate_stream.total_in();
             if written != size {
-                bail!("expected object of size {}, got object of size {}", size, written)
+                bail!(
+                    "expected object of size {}, got object of size {}",
+                    size,
+                    written
+                )
             }
             Ok(obj_type)
         }
@@ -217,22 +221,24 @@ impl<D: Digest + Send + Sync> PackedStore<D> {
     pub fn load_all<T: AsRef<Path>>(dir: T) -> anyhow::Result<Vec<Self>> {
         let mut pb = PathBuf::from(dir.as_ref());
         pb.push("pack");
-        Ok(std::fs::read_dir(&pb)?.filter_map(|xs| {
-            let dent = xs.ok()?;
-            let os_filename = dent.file_name();
-            let filename = os_filename.to_string_lossy();
-            if filename.len() < 4 {
-                return None
-            }
+        Ok(std::fs::read_dir(&pb)?
+            .filter_map(|xs| {
+                let dent = xs.ok()?;
+                let os_filename = dent.file_name();
+                let filename = os_filename.to_string_lossy();
+                if filename.len() < 4 {
+                    return None;
+                }
 
-            if &filename[filename.len() - 4..] != ".idx" {
-                return None
-            }
+                if &filename[filename.len() - 4..] != ".idx" {
+                    return None;
+                }
 
-            let mut loc = pb.clone();
-            loc.push(filename.replace(".idx", ".pack"));
-            Self::new(&loc, &dent.path()).ok()
-        }).collect())
+                let mut loc = pb.clone();
+                loc.push(filename.replace(".idx", ".pack"));
+                Self::new(&loc, &dent.path()).ok()
+            })
+            .collect())
     }
 }
 

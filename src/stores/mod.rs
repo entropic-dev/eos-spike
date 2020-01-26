@@ -39,7 +39,7 @@ pub trait ReadableStore {
 
     fn get_sync<T: AsRef<[u8]> + Send + Sync>(
         &self,
-        item: T
+        item: T,
     ) -> anyhow::Result<Option<Envelope<Vec<u8>>>>;
 
     async fn list(&self) -> Self::EnvelopeStream;

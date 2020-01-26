@@ -1,10 +1,12 @@
-use anyhow::bail;
-use std::io::{ Write, Cursor, Read };
-use sodiumoxide::crypto::sign::ed25519::{ PublicKey, SecretKey, sign_detached, verify_detached, Signature };
-use thiserror::Error;
 use crate::stores::ReadableStore;
-use std::ops::{ BitAnd, BitOrAssign };
+use anyhow::bail;
+use sodiumoxide::crypto::sign::ed25519::{
+    sign_detached, verify_detached, PublicKey, SecretKey, Signature,
+};
 use std::collections::HashSet;
+use std::io::{Cursor, Read, Write};
+use std::ops::{BitAnd, BitOrAssign};
+use thiserror::Error;
 
 // The varint crate let me down. This could be better/faster.
 fn read_varint<R: Read>(r: &mut R) -> anyhow::Result<u64> {
@@ -52,42 +54,29 @@ fn write_varint_str<W: Write>(w: &mut W, s: &str) -> anyhow::Result<usize> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Claim {
-    AuthorityAdd {
-        public_key: String,
-        name: String
-    },
-    AuthorityRemove {
-        name: String
-    },
+    AuthorityAdd { public_key: String, name: String },
+    AuthorityRemove { name: String },
     Date(u64),
-    Yank {
-        version: String,
-        reason: String
-    },
-    Unyank {
-        version: String
-    },
-    Tag {
-        tag: String,
-        version: String
-    },
-    Publication {
-        version: String,
-        id: Vec<u8>
-    },
-    Other {
-        typeno: u64,
-        data: Vec<u8>
-    }
+    Yank { version: String, reason: String },
+    Unyank { version: String },
+    Tag { tag: String, version: String },
+    Publication { version: String, id: Vec<u8> },
+    Other { typeno: u64, data: Vec<u8> },
 }
 
 impl Claim {
     pub fn bitmask(&self) -> u8 {
         match self {
-            Claim::AuthorityAdd { public_key: _, name: _ } => 0x01,
+            Claim::AuthorityAdd {
+                public_key: _,
+                name: _,
+            } => 0x01,
             Claim::AuthorityRemove { name: _ } => 0x02,
             Claim::Date(_) => 0x04,
-            Claim::Yank { version: _, reason: _ } => 0x08,
+            Claim::Yank {
+                version: _,
+                reason: _,
+            } => 0x08,
             Claim::Unyank { version: _ } => 0x10,
             Claim::Tag { version: _, tag: _ } => 0x20,
             Claim::Publication { version: _, id: _ } => 0x40,
@@ -104,39 +93,39 @@ impl Claim {
                 destination.write_all(&mask[..])?;
                 written += write_varint_str(destination, &*public_key)?;
                 written += write_varint_str(destination, &*name)?;
-            },
+            }
             Claim::AuthorityRemove { name } => {
                 let mask = [0x02u8; 1];
                 written += 1;
                 destination.write_all(&mask[..])?;
                 written += write_varint_str(destination, &*name)?;
-            },
+            }
             Claim::Date(timestamp) => {
                 let mask = [0x04u8; 1];
                 written += 1;
                 destination.write_all(&mask[..])?;
                 written += write_varint(destination, *timestamp)?;
-            },
+            }
             Claim::Yank { version, reason } => {
                 let mask = [0x08u8; 1];
                 written += 1;
                 destination.write_all(&mask[..])?;
                 written += write_varint_str(destination, &*version)?;
                 written += write_varint_str(destination, &*reason)?;
-            },
+            }
             Claim::Unyank { version } => {
                 let mask = [0x10u8; 1];
                 written += 1;
                 destination.write_all(&mask[..])?;
                 written += write_varint_str(destination, &*version)?;
-            },
+            }
             Claim::Tag { version, tag } => {
                 let mask = [0x20u8; 1];
                 written += 1;
                 destination.write_all(&mask[..])?;
                 written += write_varint_str(destination, &*version)?;
                 written += write_varint_str(destination, &*tag)?;
-            },
+            }
             Claim::Publication { version, id } => {
                 let mask = [0x40u8; 1];
                 written += 1;
@@ -145,7 +134,7 @@ impl Claim {
                 written += write_varint(destination, id.len() as u64)?;
                 written += id.len();
                 destination.write_all(&id[..])?;
-            },
+            }
             Claim::Other { typeno, data } => {
                 written += write_varint(destination, *typeno)?;
                 written += data.len();
@@ -156,7 +145,7 @@ impl Claim {
         Ok(written)
     }
 
-    pub fn from_bytes<T: AsRef<[u8]> + Send> (input: T) -> anyhow::Result<Claim> {
+    pub fn from_bytes<T: AsRef<[u8]> + Send>(input: T) -> anyhow::Result<Claim> {
         // first byte is type encoded as varint
         // auth-add := varint publickey varint name
         // auth-rm := varint name
@@ -172,36 +161,24 @@ impl Claim {
         let claim_type = read_varint(&mut cursor)?;
         capacity -= cursor.position() as usize;
         Ok(match claim_type {
-            0x01 => {
-                Claim::AuthorityAdd {
-                    public_key: read_varint_string(&mut cursor)?,
-                    name: read_varint_string(&mut cursor)?
-                }
+            0x01 => Claim::AuthorityAdd {
+                public_key: read_varint_string(&mut cursor)?,
+                name: read_varint_string(&mut cursor)?,
             },
-            0x02 => {
-                Claim::AuthorityRemove {
-                    name: read_varint_string(&mut cursor)?
-                }
+            0x02 => Claim::AuthorityRemove {
+                name: read_varint_string(&mut cursor)?,
             },
-            0x04 => {
-                Claim::Date(read_varint(&mut cursor)?)
+            0x04 => Claim::Date(read_varint(&mut cursor)?),
+            0x08 => Claim::Yank {
+                version: read_varint_string(&mut cursor)?,
+                reason: read_varint_string(&mut cursor)?,
             },
-            0x08 => {
-                Claim::Yank {
-                    version: read_varint_string(&mut cursor)?,
-                    reason: read_varint_string(&mut cursor)?
-                }
+            0x10 => Claim::Unyank {
+                version: read_varint_string(&mut cursor)?,
             },
-            0x10 => {
-                Claim::Unyank {
-                    version: read_varint_string(&mut cursor)?
-                }
-            },
-            0x20 => {
-                Claim::Tag {
-                    tag: read_varint_string(&mut cursor)?,
-                    version: read_varint_string(&mut cursor)?
-                }
+            0x20 => Claim::Tag {
+                tag: read_varint_string(&mut cursor)?,
+                version: read_varint_string(&mut cursor)?,
             },
             0x40 => {
                 let version = read_varint_string(&mut cursor)?;
@@ -209,16 +186,13 @@ impl Claim {
                 cursor.read_exact(&mut id)?;
                 Claim::Publication {
                     version,
-                    id: id.to_vec()
+                    id: id.to_vec(),
                 }
-            },
+            }
             typeno => {
                 let mut rest = Vec::with_capacity(capacity);
                 cursor.read_to_end(&mut rest)?;
-                Claim::Other {
-                    typeno,
-                    data: rest
-                }
+                Claim::Other { typeno, data: rest }
             }
         })
     }
@@ -230,11 +204,11 @@ pub struct Event {
     claims: Vec<Claim>,
     parents: Vec<Vec<u8>>,
     signatory: String,
-    signature: Vec<u8>
+    signature: Vec<u8>,
 }
 
 impl Event {
-    pub fn from_bytes<T: AsRef<[u8]> + Send> (input: T) -> anyhow::Result<Self> {
+    pub fn from_bytes<T: AsRef<[u8]> + Send>(input: T) -> anyhow::Result<Self> {
         // CLAIM_BITMASK(u8)
         // parent hashes(varint u32)
         // parent hashes * 32 * N
@@ -289,12 +263,11 @@ impl Event {
             signature,
             signatory,
             claimset,
-            parents
-        })
+            parents,
+        });
     }
 
     pub fn to_bytes_unsigned<W: Write>(&self, destination: &mut W) -> anyhow::Result<usize> {
-
         let claimset_buf = [self.claimset; 1];
         let mut written = 1 as usize;
         destination.write_all(&claimset_buf)?;
@@ -355,14 +328,14 @@ enum EventBuilderError {
     #[error("Authority name \"{0}\" is already registered with another key")]
     AuthorityNameConflict(String),
     #[error("Provided secret key is not an authority")]
-    NotAuthoritative
+    NotAuthoritative,
 }
 
 pub struct EventBuilder {
     claims: Vec<Claim>,
     parents: HashSet<Vec<u8>>,
     claimset: u8,
-    error: Option<EventBuilderError>
+    error: Option<EventBuilderError>,
 }
 
 impl EventBuilder {
@@ -371,24 +344,22 @@ impl EventBuilder {
             claims: Vec::new(),
             parents: HashSet::new(),
             claimset: 0,
-            error: None
+            error: None,
         }
     }
 
-    pub fn parent<T: AsRef<[u8]>> (mut self, p: T) -> Self {
+    pub fn parent<T: AsRef<[u8]>>(mut self, p: T) -> Self {
         let bytes = p.as_ref();
         self.parents.insert(bytes.to_vec());
         self
     }
 
-    pub fn claim (mut self, c: Claim) -> Self {
+    pub fn claim(mut self, c: Claim) -> Self {
         let bitmask = c.bitmask();
         let has_claim = bitmask & self.claimset > 0;
         if has_claim {
             match &c {
-                Claim::Date(_) => {
-                    self.error = Some(EventBuilderError::RepeatedDate)
-                },
+                Claim::Date(_) => self.error = Some(EventBuilderError::RepeatedDate),
                 _ => {}
             }
         }
@@ -397,11 +368,13 @@ impl EventBuilder {
         self
     }
 
-    pub fn sign<T, R>(self, signatory: T, sk: &SecretKey, store: &R) -> anyhow::Result<Event> where
+    pub fn sign<T, R>(self, signatory: T, sk: &SecretKey, store: &R) -> anyhow::Result<Event>
+    where
         T: AsRef<str>,
-        R: ReadableStore {
+        R: ReadableStore,
+    {
         if let Some(err) = self.error {
-            return Err(err.into())
+            return Err(err.into());
         }
 
         let mut event = Event {
@@ -409,7 +382,7 @@ impl EventBuilder {
             claims: self.claims,
             parents: self.parents.into_iter().collect(),
             signatory: String::from(signatory.as_ref()),
-            signature: Vec::new()
+            signature: Vec::new(),
         };
 
         let mut unsigned_event_bytes = Vec::new();
@@ -426,6 +399,14 @@ impl EventBuilder {
 pub struct EventIterator<'a, R: ReadableStore> {
     store: &'a R,
     seen: HashSet<[u8; 32]>,
+}
+
+impl<'a, R: ReadableStore> Iterator for EventIterator<'a, R> {
+    type Item = ([u8; 32], Event);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -448,7 +429,8 @@ mod tests {
         let (pk, sk) = sign::gen_keypair();
         let ev = EventBuilder::new()
             .claim(Claim::Date(1579825624495u64))
-            .sign("Chris Dickinson <chris@neversaw.us>", &sk, &()).expect("failed to sign");
+            .sign("Chris Dickinson <chris@neversaw.us>", &sk, &())
+            .expect("failed to sign");
 
         println!("signed={:?}", ev);
 
@@ -459,7 +441,11 @@ mod tests {
         let ev2 = Event::from_bytes(&buf[..]).expect("failed to marshal from bytes");
         println!("resurrected={:?}", ev2);
 
-        assert!(ev.verify(&pk).expect("Failed to serialize 'ev' in order to verify"));
-        assert!(ev2.verify(&pk).expect("Failed to serialize 'ev2' in order to verify"));
+        assert!(ev
+            .verify(&pk)
+            .expect("Failed to serialize 'ev' in order to verify"));
+        assert!(ev2
+            .verify(&pk)
+            .expect("Failed to serialize 'ev2' in order to verify"));
     }
 }

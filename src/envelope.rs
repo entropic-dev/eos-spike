@@ -25,4 +25,3 @@ impl<T: AsRef<[u8]> + Send> Envelope<T> {
         }
     }
 }
-

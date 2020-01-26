@@ -1,15 +1,14 @@
-pub mod errors;
 pub mod envelope;
-pub mod stores;
+pub mod errors;
 pub mod objects;
+pub mod stores;
 
-pub trait PackageArg {
-}
+pub trait PackageArg {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AliasArg<T: PackageArg + Clone + std::fmt::Debug + Eq + PartialEq> {
     name: String,
-    package: T
+    package: T,
 }
 impl<T: PackageArg + Clone + std::fmt::Debug + Eq + PartialEq> PackageArg for AliasArg<T> {}
 

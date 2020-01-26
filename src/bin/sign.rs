@@ -1,5 +1,5 @@
 use sodiumoxide::crypto::sign;
-use std::io::{ Read, Write };
+use std::io::{Read, Write};
 
 fn main() -> anyhow::Result<()> {
     let mut data = Vec::new();

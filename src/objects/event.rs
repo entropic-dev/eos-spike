@@ -56,7 +56,6 @@ fn write_varint_str<W: Write>(w: &mut W, s: &str) -> anyhow::Result<usize> {
 pub enum Claim {
     AuthorityAdd { public_key: String, name: String },
     AuthorityRemove { name: String },
-    Date(u64),
     Yank { version: String, reason: String },
     Unyank { version: String },
     Tag { tag: String, version: String },
@@ -72,7 +71,6 @@ impl Claim {
                 name: _,
             } => 0x01,
             Claim::AuthorityRemove { name: _ } => 0x02,
-            Claim::Date(_) => 0x04,
             Claim::Yank {
                 version: _,
                 reason: _,
@@ -86,6 +84,7 @@ impl Claim {
 
     pub fn to_bytes<W: Write>(&self, destination: &mut W) -> anyhow::Result<usize> {
         let mut written = 0;
+
         match self {
             Claim::AuthorityAdd { public_key, name } => {
                 let mask = [0x01u8; 1];
@@ -94,18 +93,14 @@ impl Claim {
                 written += write_varint_str(destination, &*public_key)?;
                 written += write_varint_str(destination, &*name)?;
             }
+
             Claim::AuthorityRemove { name } => {
                 let mask = [0x02u8; 1];
                 written += 1;
                 destination.write_all(&mask[..])?;
                 written += write_varint_str(destination, &*name)?;
             }
-            Claim::Date(timestamp) => {
-                let mask = [0x04u8; 1];
-                written += 1;
-                destination.write_all(&mask[..])?;
-                written += write_varint(destination, *timestamp)?;
-            }
+
             Claim::Yank { version, reason } => {
                 let mask = [0x08u8; 1];
                 written += 1;
@@ -113,12 +108,14 @@ impl Claim {
                 written += write_varint_str(destination, &*version)?;
                 written += write_varint_str(destination, &*reason)?;
             }
+
             Claim::Unyank { version } => {
                 let mask = [0x10u8; 1];
                 written += 1;
                 destination.write_all(&mask[..])?;
                 written += write_varint_str(destination, &*version)?;
             }
+
             Claim::Tag { version, tag } => {
                 let mask = [0x20u8; 1];
                 written += 1;
@@ -126,6 +123,7 @@ impl Claim {
                 written += write_varint_str(destination, &*version)?;
                 written += write_varint_str(destination, &*tag)?;
             }
+
             Claim::Publication { version, id } => {
                 let mask = [0x40u8; 1];
                 written += 1;
@@ -135,6 +133,7 @@ impl Claim {
                 written += id.len();
                 destination.write_all(&id[..])?;
             }
+
             Claim::Other { typeno, data } => {
                 written += write_varint(destination, *typeno)?;
                 written += data.len();

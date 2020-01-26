@@ -1,4 +1,4 @@
-use crate::object::Object;
+use crate::envelope::Envelope;
 use crate::stores::{ReadableStore, WritableStore};
 use anyhow::{self, bail};
 use async_std::prelude::*;
@@ -99,9 +99,9 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
             offsets.push(offs);
             let obj = self.get(hash).await?.unwrap();
             let (typ, bytes) = match &obj {
-                Object::Blob(bytes) => (0u8, bytes),
-                Object::Event(bytes) => (1u8, bytes),
-                Object::Version(bytes) => (2u8, bytes),
+                Envelope::Blob(bytes) => (0u8, bytes),
+                Envelope::Event(bytes) => (1u8, bytes),
+                Envelope::Version(bytes) => (2u8, bytes),
             };
             let mut size = bytes.len();
             let mut size_bytes = Vec::new();
@@ -193,13 +193,13 @@ impl<D: 'static + Digest + Send + Sync> LooseStore<D> {
 }
 
 #[derive(Clone)]
-pub struct LooseObjectStream<D> {
+pub struct LooseEnvelopeStream<D> {
     location: PathBuf,
     phantom: PhantomData<D>,
 }
 
-impl<D> Stream for LooseObjectStream<D> {
-    type Item = Object<Vec<u8>>;
+impl<D> Stream for LooseEnvelopeStream<D> {
+    type Item = Envelope<Vec<u8>>;
     fn poll_next(
         self: Pin<&mut Self>,
         _cx: &mut futures::task::Context,
@@ -210,9 +210,9 @@ impl<D> Stream for LooseObjectStream<D> {
 
 #[async_trait]
 impl<D: 'static + Digest + Send + Sync> WritableStore<D> for LooseStore<D> {
-    async fn add<T: AsRef<[u8]> + Send>(&self, object: Object<T>) -> anyhow::Result<bool> {
+    async fn add<T: AsRef<[u8]> + Send>(&self, object: Envelope<T>) -> anyhow::Result<bool> {
         let mut digest = D::new();
-        let item = object.bytes().as_ref();
+        let item = object.payload_bytes().as_ref();
         let header = format!("{} {}\0", object.to_string(), item.len());
         digest.input(&header);
         digest.input(item);
@@ -279,12 +279,12 @@ impl<D: 'static + Digest + Send + Sync> WritableStore<D> for LooseStore<D> {
 
 #[async_trait]
 impl<D: 'static + Digest + Send + Sync> ReadableStore for LooseStore<D> {
-    type ObjectStream = LooseObjectStream<D>;
+    type EnvelopeStream = LooseEnvelopeStream<D>;
 
     fn get_sync<T: AsRef<[u8]> + Send + Sync>(
         &self,
         item: T
-    ) -> anyhow::Result<Option<Object<Vec<u8>>>> {
+    ) -> anyhow::Result<Option<Envelope<Vec<u8>>>> {
         let bytes = item.as_ref();
         let bytes_encoded = hex::encode(bytes);
         let mut loc = self.location.clone();
@@ -327,9 +327,9 @@ impl<D: 'static + Digest + Send + Sync> ReadableStore for LooseStore<D> {
         }
 
         match std::str::from_utf8(&type_vec[..])? {
-            "blob " => Ok(Some(Object::Blob(object))),
-            "sign " => Ok(Some(Object::Event(object))),
-            "vers " => Ok(Some(Object::Version(object))),
+            "blob " => Ok(Some(Envelope::Blob(object))),
+            "sign " => Ok(Some(Envelope::Event(object))),
+            "vers " => Ok(Some(Envelope::Version(object))),
             _ => bail!("Could not parse object type"),
         }
     }
@@ -337,7 +337,7 @@ impl<D: 'static + Digest + Send + Sync> ReadableStore for LooseStore<D> {
     async fn get<T: AsRef<[u8]> + Send + Sync>(
         &self,
         item: T,
-    ) -> anyhow::Result<Option<Object<Vec<u8>>>> {
+    ) -> anyhow::Result<Option<Envelope<Vec<u8>>>> {
         let bytes = item.as_ref();
         let bytes_encoded = hex::encode(bytes);
         let mut loc = self.location.clone();
@@ -381,14 +381,14 @@ impl<D: 'static + Digest + Send + Sync> ReadableStore for LooseStore<D> {
         }
 
         match std::str::from_utf8(&type_vec[..])? {
-            "blob " => Ok(Some(Object::Blob(object))),
-            "sign " => Ok(Some(Object::Event(object))),
-            "vers " => Ok(Some(Object::Version(object))),
+            "blob " => Ok(Some(Envelope::Blob(object))),
+            "sign " => Ok(Some(Envelope::Event(object))),
+            "vers " => Ok(Some(Envelope::Version(object))),
             _ => bail!("Could not parse object type"),
         }
     }
 
-    async fn list(&self) -> Self::ObjectStream {
+    async fn list(&self) -> Self::EnvelopeStream {
         unimplemented!()
     }
 

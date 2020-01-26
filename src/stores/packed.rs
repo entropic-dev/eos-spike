@@ -1,4 +1,4 @@
-use crate::object::Object;
+use crate::envelope::Envelope;
 use crate::stores::ReadableStore;
 use anyhow::{self, bail};
 use async_std::stream::Stream;
@@ -15,7 +15,7 @@ use std::marker::PhantomData;
 use std::path::{ Path, PathBuf };
 
 #[derive(Clone)]
-pub struct PackedObjectStream<D> {
+pub struct PackedEnvelopeStream<D> {
     phantom: PhantomData<D>,
 }
 
@@ -135,7 +135,7 @@ impl Reader {
         Reader { mmap }
     }
 
-    fn read_bounds(&self, start: u64, end: u64) -> anyhow::Result<Object<Vec<u8>>> {
+    fn read_bounds(&self, start: u64, end: u64) -> anyhow::Result<Envelope<Vec<u8>>> {
         let mut cursor = Cursor::new(&self.mmap[..end as usize]);
         cursor.seek(SeekFrom::Start(start))?;
 
@@ -143,9 +143,9 @@ impl Reader {
         let packfile_type = packfile_read(&mut cursor, &mut output, &mut 0)?;
 
         Ok(match packfile_type {
-            0 => Object::Blob(output),
-            1 => Object::Event(output),
-            2 => Object::Version(output),
+            0 => Envelope::Blob(output),
+            1 => Envelope::Event(output),
+            2 => Envelope::Version(output),
             _ => bail!("Unrecognized type"),
         })
     }
@@ -238,11 +238,11 @@ impl<D: Digest + Send + Sync> PackedStore<D> {
 
 #[async_trait]
 impl<D: 'static + Digest + Send + Sync> ReadableStore for PackedStore<D> {
-    type ObjectStream = PackedObjectStream<D>;
+    type EnvelopeStream = PackedEnvelopeStream<D>;
     fn get_sync<T: AsRef<[u8]> + Send + Sync>(
         &self,
         item: T,
-    ) -> anyhow::Result<Option<Object<Vec<u8>>>> {
+    ) -> anyhow::Result<Option<Envelope<Vec<u8>>>> {
         let bytes = item.as_ref();
         let maybe_bounds = self.index.get_bounds(bytes);
         if maybe_bounds.is_none() {
@@ -259,7 +259,7 @@ impl<D: 'static + Digest + Send + Sync> ReadableStore for PackedStore<D> {
     async fn get<T: AsRef<[u8]> + Send + Sync>(
         &self,
         item: T,
-    ) -> anyhow::Result<Option<Object<Vec<u8>>>> {
+    ) -> anyhow::Result<Option<Envelope<Vec<u8>>>> {
         let bytes = item.as_ref();
         let maybe_bounds = self.index.get_bounds(bytes);
         if maybe_bounds.is_none() {
@@ -273,7 +273,7 @@ impl<D: 'static + Digest + Send + Sync> ReadableStore for PackedStore<D> {
         }
     }
 
-    async fn list(&self) -> Self::ObjectStream {
+    async fn list(&self) -> Self::EnvelopeStream {
         unimplemented!()
     }
 

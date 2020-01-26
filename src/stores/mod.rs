@@ -1,4 +1,4 @@
-use crate::object::Object;
+use crate::envelope::Envelope;
 use async_std::stream::Stream;
 use async_trait::async_trait;
 use sha2::Digest;
@@ -18,7 +18,7 @@ pub mod packed;
 
 #[async_trait]
 pub trait WritableStore<D: Digest + Send + Sync> {
-    async fn add<T: AsRef<[u8]> + Send>(&self, object: Object<T>) -> anyhow::Result<bool>;
+    async fn add<T: AsRef<[u8]> + Send>(&self, object: Envelope<T>) -> anyhow::Result<bool>;
     async fn add_stream<'a, S: Stream<Item = &'a [u8]> + Send>(
         &mut self,
         item: S,
@@ -30,19 +30,19 @@ pub trait WritableStore<D: Digest + Send + Sync> {
 
 #[async_trait]
 pub trait ReadableStore {
-    type ObjectStream;
+    type EnvelopeStream;
 
     async fn get<T: AsRef<[u8]> + Send + Sync>(
         &self,
         item: T,
-    ) -> anyhow::Result<Option<Object<Vec<u8>>>>;
+    ) -> anyhow::Result<Option<Envelope<Vec<u8>>>>;
 
     fn get_sync<T: AsRef<[u8]> + Send + Sync>(
         &self,
         item: T
-    ) -> anyhow::Result<Option<Object<Vec<u8>>>>;
+    ) -> anyhow::Result<Option<Envelope<Vec<u8>>>>;
 
-    async fn list(&self) -> Self::ObjectStream;
+    async fn list(&self) -> Self::EnvelopeStream;
     async fn get_stream<'a, T: AsRef<[u8]> + Send, R: Stream<Item = &'a [u8]>>(
         &self,
         item: T,

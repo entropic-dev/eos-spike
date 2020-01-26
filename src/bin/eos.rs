@@ -3,7 +3,7 @@ use anyhow::{self, bail};
 use async_std::{ fs, io };
 use colored::Colorize;
 use digest::Digest;
-use entropic_object_store::object::Object;
+use entropic_object_store::envelope::Envelope;
 use entropic_object_store::stores::loose::LooseStore;
 use entropic_object_store::stores::packed::PackedStore;
 use entropic_object_store::stores::{ReadableStore, WritableStore};
@@ -71,7 +71,7 @@ async fn load_file<D: Digest + Send + Sync, S: WritableStore<D> + Send + Sync>(
             file
         )),
         Ok(data) => {
-            let result = match store.add(Object::Blob(data)).await {
+            let result = match store.add(Envelope::Blob(data)).await {
                 Err(_e) => {
                     return Ok(format!(
                         "{} failed to write {:?}",

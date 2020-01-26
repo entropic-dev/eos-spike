@@ -1,5 +1,5 @@
 pub mod errors;
-pub mod object;
+pub mod envelope;
 pub mod stores;
 pub mod objects;
 

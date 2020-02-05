@@ -7,6 +7,7 @@ use std::collections::{ BinaryHeap, HashSet };
 use std::io::{Cursor, Read, Write};
 use std::ops::{BitAnd, BitOrAssign};
 use thiserror::Error;
+use crate::envelope::Envelope;
 
 // The varint crate let me down. This could be better/faster.
 fn read_varint<R: Read>(r: &mut R) -> anyhow::Result<u64> {
@@ -167,7 +168,6 @@ impl Claim {
             0x02 => Claim::AuthorityRemove {
                 name: read_varint_string(&mut cursor)?,
             },
-            0x04 => Claim::Date(read_varint(&mut cursor)?),
             0x08 => Claim::Yank {
                 version: read_varint_string(&mut cursor)?,
                 reason: read_varint_string(&mut cursor)?,
@@ -202,7 +202,7 @@ pub struct Event {
     claimset: u8,
     timestamp: u64,
     claims: Vec<Claim>,
-    parents: Vec<Vec<u8>>,
+    parents: Vec<[u8; 32]>,
     signatory: String,
     signature: Vec<u8>,
 }
@@ -234,10 +234,10 @@ impl Event {
         let mut cursor = Cursor::new(&bytes[1..]);
         let parent_count = read_varint(&mut cursor)? as usize;
         let mut parents = Vec::with_capacity(parent_count);
-        let mut parent_oid = [0; 32];
         while parents.len() < parent_count {
+            let mut parent_oid = [0; 32];
             cursor.read_exact(&mut parent_oid)?;
-            parents.push(parent_oid.to_vec());
+            parents.push(parent_oid);
         }
 
         let claim_count = read_varint(&mut cursor)? as usize;
@@ -260,6 +260,7 @@ impl Event {
 
         return Ok(Event {
             claims,
+            timestamp: 0,
             signature,
             signatory,
             claimset,
@@ -315,8 +316,6 @@ impl Event {
 
 #[derive(Error, Debug)]
 enum EventBuilderError {
-    #[error("Multiple dates")]
-    RepeatedDate,
     #[error("Attempt to remove authority \"{0}\" which is not a currrent authority")]
     RemovedAuthorityDoesNotExist(String),
     #[error("Yanked version \"{0}\" does not exist")]
@@ -333,7 +332,7 @@ enum EventBuilderError {
 
 pub struct EventBuilder {
     claims: Vec<Claim>,
-    parents: HashSet<Vec<u8>>,
+    parents: HashSet<[u8; 32]>,
     claimset: u8,
     error: Option<EventBuilderError>,
 }
@@ -349,20 +348,15 @@ impl EventBuilder {
     }
 
     pub fn parent<T: AsRef<[u8]>>(mut self, p: T) -> Self {
-        let bytes = p.as_ref();
-        self.parents.insert(bytes.to_vec());
+        let mut dest = [0; 32];
+        dest.copy_from_slice(p.as_ref());
+        self.parents.insert(dest);
         self
     }
 
     pub fn claim(mut self, c: Claim) -> Self {
         let bitmask = c.bitmask();
         let has_claim = bitmask & self.claimset > 0;
-        if has_claim {
-            match &c {
-                Claim::Date(_) => self.error = Some(EventBuilderError::RepeatedDate),
-                _ => {}
-            }
-        }
         self.claims.push(c);
         self.claimset |= bitmask;
         self
@@ -378,6 +372,7 @@ impl EventBuilder {
         }
 
         let mut event = Event {
+            timestamp: 0,
             claimset: self.claimset,
             claims: self.claims,
             parents: self.parents.into_iter().collect(),
@@ -400,7 +395,7 @@ pub struct IdEvent([u8; 32], Event);
 
 impl std::cmp::Ord for IdEvent {
     fn cmp(&self, other: &IdEvent) -> std::cmp::Ordering {
-        self.1.timestamp.cmp(other.1.timestamp)
+        self.1.timestamp.cmp(&other.1.timestamp)
     }
 }
 
@@ -430,25 +425,24 @@ impl<'a, R: ReadableStore> Iterator for EventIterator<'a, R> {
     fn next(&mut self) -> Option<Self::Item> {
         let newest = self.target.pop()?;
 
-        if let Some(xs) = newest.1.parents {
-            let seen = &mut self.seen;
-            let storage_set = &self.storage_set;
-            let parents = xs.into_iter().filter_map(|id| {
-                if seen.contains(&id) {
-                    return None
-                }
-
-                if let Object::Commit(commit) = storage_set.get_and_load(&id).ok()?? {
-                    seen.insert(id.clone());
-                    return Some(IdCommit(id, commit))
-                } else {
-                    return None
-                }
-            });
-
-            for parent in parents {
-                self.target.push(parent);
+        let seen = &mut self.seen;
+        let store = &self.store;
+        let parents = newest.1.parents.iter().filter_map(|id| {
+            if seen.contains(id) {
+                return None
             }
+
+            if let Envelope::Event(bytes) = store.get_sync(&id).ok()?? {
+                seen.insert(id.clone());
+                let ev = Event::from_bytes(bytes).ok()?;
+                return Some(IdEvent(id.clone(), ev))
+            } else {
+                return None
+            }
+        });
+
+        for parent in parents {
+            self.target.push(parent);
         }
 
         Some((newest.0, newest.1))
@@ -474,7 +468,6 @@ mod tests {
     fn eventbuilder_no_parents_test() {
         let (pk, sk) = sign::gen_keypair();
         let ev = EventBuilder::new()
-            .claim(Claim::Date(1579825624495u64))
             .sign("Chris Dickinson <chris@neversaw.us>", &sk, &())
             .expect("failed to sign");
 

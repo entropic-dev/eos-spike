@@ -3,7 +3,7 @@ use anyhow::bail;
 use sodiumoxide::crypto::sign::ed25519::{
     sign_detached, verify_detached, PublicKey, SecretKey, Signature,
 };
-use std::collections::HashSet;
+use std::collections::{ BinaryHeap, HashSet };
 use std::io::{Cursor, Read, Write};
 use std::ops::{BitAnd, BitOrAssign};
 use thiserror::Error;
@@ -200,6 +200,7 @@ impl Claim {
 #[derive(PartialEq, Debug)]
 pub struct Event {
     claimset: u8,
+    timestamp: u64,
     claims: Vec<Claim>,
     parents: Vec<Vec<u8>>,
     signatory: String,
@@ -395,16 +396,62 @@ impl EventBuilder {
     }
 }
 
+pub struct IdEvent([u8; 32], Event);
+
+impl std::cmp::Ord for IdEvent {
+    fn cmp(&self, other: &IdEvent) -> std::cmp::Ordering {
+        self.1.timestamp.cmp(other.1.timestamp)
+    }
+}
+
+impl std::cmp::PartialOrd for IdEvent {
+    fn partial_cmp(&self, other: &IdEvent) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl std::cmp::PartialEq for IdEvent {
+    fn eq(&self, other: &IdEvent) -> bool {
+        self.cmp(other) == std::cmp::Ordering::Equal
+    }
+}
+
+impl std::cmp::Eq for IdEvent { }
+
 pub struct EventIterator<'a, R: ReadableStore> {
     store: &'a R,
     seen: HashSet<[u8; 32]>,
+    target: BinaryHeap<IdEvent>
 }
 
 impl<'a, R: ReadableStore> Iterator for EventIterator<'a, R> {
     type Item = ([u8; 32], Event);
 
     fn next(&mut self) -> Option<Self::Item> {
-        None
+        let newest = self.target.pop()?;
+
+        if let Some(xs) = newest.1.parents {
+            let seen = &mut self.seen;
+            let storage_set = &self.storage_set;
+            let parents = xs.into_iter().filter_map(|id| {
+                if seen.contains(&id) {
+                    return None
+                }
+
+                if let Object::Commit(commit) = storage_set.get_and_load(&id).ok()?? {
+                    seen.insert(id.clone());
+                    return Some(IdCommit(id, commit))
+                } else {
+                    return None
+                }
+            });
+
+            for parent in parents {
+                self.target.push(parent);
+            }
+        }
+
+        Some((newest.0, newest.1))
     }
 }
 

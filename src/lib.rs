@@ -2,6 +2,7 @@ pub mod envelope;
 pub mod errors;
 pub mod objects;
 pub mod stores;
+pub mod keys;
 
 pub trait PackageArg {}
 

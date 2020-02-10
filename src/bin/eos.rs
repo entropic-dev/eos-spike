@@ -33,6 +33,18 @@ impl FromStr for Backends {
 }
 
 #[derive(StructOpt)]
+enum AuthorityCommand {
+    Add {
+        name: String,
+        #[structopt(short, long, default_value = "-", parse(from_os_str))]
+        public_key: PathBuf
+    },
+    Rm {
+        name: String,
+    }
+}
+
+#[derive(StructOpt)]
 enum Command {
     Add {
         #[structopt(parse(from_os_str))]
@@ -49,6 +61,10 @@ enum Command {
         backend: Backends,
     },
     Pack {},
+    Auth {
+        #[structopt(subcommand)]
+        cmd: AuthorityCommand
+    }
 }
 
 #[derive(StructOpt)]
@@ -56,6 +72,8 @@ enum Command {
 struct Eos {
     #[structopt(short, parse(from_os_str))]
     dir: Option<PathBuf>,
+    #[structopt(short)]
+    parent: Option<String>,
     #[structopt(subcommand)]
     command: Command,
 }
@@ -228,6 +246,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Command::Pack {} => loose.to_packed_store().await?,
+        _ => {}
     };
     Ok(())
 }

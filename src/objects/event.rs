@@ -8,6 +8,7 @@ use std::io::{Cursor, Read, Write};
 use std::ops::{BitAnd, BitOrAssign};
 use thiserror::Error;
 use crate::envelope::Envelope;
+use chrono::prelude::*;
 
 // The varint crate let me down. This could be better/faster.
 fn read_varint<R: Read>(r: &mut R) -> anyhow::Result<u64> {
@@ -200,7 +201,7 @@ impl Claim {
 #[derive(PartialEq, Debug)]
 pub struct Event {
     claimset: u8,
-    timestamp: u64,
+    at: DateTime<Utc>,
     claims: Vec<Claim>,
     parents: Vec<[u8; 32]>,
     signatory: String,
@@ -210,6 +211,7 @@ pub struct Event {
 impl Event {
     pub fn from_bytes<T: AsRef<[u8]> + Send>(input: T) -> anyhow::Result<Self> {
         // CLAIM_BITMASK(u8)
+        // at(i64)
         // parent hashes(varint u32)
         // parent hashes * 32 * N
         // claims(varint u32)
@@ -232,6 +234,11 @@ impl Event {
 
         let claimset = bytes[0];
         let mut cursor = Cursor::new(&bytes[1..]);
+
+        let mut at_bytes = [0u8; 8];
+        cursor.read_exact(&mut at_bytes)?;
+        let mut at = Utc.timestamp(i64::from_be_bytes(at_bytes), 0);
+
         let parent_count = read_varint(&mut cursor)? as usize;
         let mut parents = Vec::with_capacity(parent_count);
         while parents.len() < parent_count {
@@ -260,7 +267,7 @@ impl Event {
 
         return Ok(Event {
             claims,
-            timestamp: 0,
+            at,
             signature,
             signatory,
             claimset,
@@ -272,6 +279,9 @@ impl Event {
         let claimset_buf = [self.claimset; 1];
         let mut written = 1 as usize;
         destination.write_all(&claimset_buf)?;
+
+        let at_bytes = self.at.timestamp().to_be_bytes();
+        destination.write_all(&at_bytes)?;
 
         written += write_varint(destination, self.parents.len() as u64)?;
         for parent in self.parents.iter() {
@@ -334,6 +344,7 @@ pub struct EventBuilder {
     claims: Vec<Claim>,
     parents: HashSet<[u8; 32]>,
     claimset: u8,
+    at: Option<DateTime<Utc>>,
     error: Option<EventBuilderError>,
 }
 
@@ -341,6 +352,7 @@ impl EventBuilder {
     pub fn new() -> Self {
         EventBuilder {
             claims: Vec::new(),
+            at: None,
             parents: HashSet::new(),
             claimset: 0,
             error: None,
@@ -351,6 +363,11 @@ impl EventBuilder {
         let mut dest = [0; 32];
         dest.copy_from_slice(p.as_ref());
         self.parents.insert(dest);
+        self
+    }
+
+    pub fn at<T: Into<DateTime<Utc>>>(mut self, at: T) -> Self {
+        self.at = Some(at.into());
         self
     }
 
@@ -372,7 +389,7 @@ impl EventBuilder {
         }
 
         let mut event = Event {
-            timestamp: 0,
+            at: self.at.unwrap_or_else(|| Utc::now()),
             claimset: self.claimset,
             claims: self.claims,
             parents: self.parents.into_iter().collect(),
@@ -395,7 +412,7 @@ pub struct IdEvent([u8; 32], Event);
 
 impl std::cmp::Ord for IdEvent {
     fn cmp(&self, other: &IdEvent) -> std::cmp::Ordering {
-        self.1.timestamp.cmp(&other.1.timestamp)
+        self.1.at.cmp(&other.1.at)
     }
 }
 
@@ -468,6 +485,7 @@ mod tests {
     fn eventbuilder_no_parents_test() {
         let (pk, sk) = sign::gen_keypair();
         let ev = EventBuilder::new()
+            .at(Local.from_local_datetime(&NaiveDate::from_ymd(2013, 10, 18).and_hms(17, 0, 0)).unwrap())
             .sign("Chris Dickinson <chris@neversaw.us>", &sk, &())
             .expect("failed to sign");
 

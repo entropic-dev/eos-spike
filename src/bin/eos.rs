@@ -4,10 +4,12 @@ use async_std::io::prelude::*;
 use async_std::{fs, io};
 use colored::Colorize;
 use digest::Digest;
+use entropic_object_store::objects::event::{ EventBuilder, Claim };
 use entropic_object_store::envelope::Envelope;
 use entropic_object_store::stores::loose::LooseStore;
 use entropic_object_store::stores::packed::PackedStore;
 use entropic_object_store::stores::{ReadableStore, WritableStore};
+use entropic_object_store::keys::{ load_public_key, load_secret_key };
 use futures::future::FutureExt;
 use futures::future::{join_all, select_all};
 use sha2::Sha256;
@@ -33,18 +35,6 @@ impl FromStr for Backends {
 }
 
 #[derive(StructOpt)]
-enum AuthorityCommand {
-    Add {
-        name: String,
-        #[structopt(short, long, default_value = "-", parse(from_os_str))]
-        public_key: PathBuf
-    },
-    Rm {
-        name: String,
-    }
-}
-
-#[derive(StructOpt)]
 enum Command {
     Add {
         #[structopt(parse(from_os_str))]
@@ -61,9 +51,10 @@ enum Command {
         backend: Backends,
     },
     Pack {},
-    Auth {
-        #[structopt(subcommand)]
-        cmd: AuthorityCommand
+    Snapshot {
+        #[structopt(short, long)]
+        comment: Option<String>,
+        parent: Option<String>
     }
 }
 
@@ -246,7 +237,42 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Command::Pack {} => loose.to_packed_store().await?,
-        _ => {}
+        Command::Snapshot { comment, parent } => {
+            let mut base = dirs::home_dir().unwrap();
+            base.push(".ssh");
+            let mut secret_key_src = base.clone();
+            secret_key_src.push("id_ed25519");
+            let mut public_key_src = base;
+            public_key_src.push("id_ed25519.pub");
+
+            let (pk, sk) = (
+                load_public_key(public_key_src)?,
+                load_secret_key(secret_key_src)?
+            );
+
+            let comment = comment.clone().unwrap_or_else(|| "".to_string());
+            let comment_bytes: Vec<_> = comment.bytes().collect();
+            let mut ev = EventBuilder::new()
+                .claim(Claim::Other {
+                    typeno: 0x80,
+                    data: comment_bytes
+                });
+
+            if let Some(p) = parent {
+                let decoded = hex::decode(p)?;
+                if decoded.len() != 32 {
+                    bail!("Please pass a 64-byte hex parent value");
+                }
+                ev = ev.parent(decoded)
+            }
+            let signed = ev.sign("Chris Dickinson <chris@neversaw.us>", &sk, &())?;
+            let mut buf = Vec::new();
+            signed.to_bytes(&mut buf);
+            let envelope = Envelope::Event(buf);
+            let (content_address, _) = envelope.content_address::<Sha256>();
+            loose.add(envelope).await?;
+            println!("{}", hex::encode(content_address));
+        }
     };
     Ok(())
 }

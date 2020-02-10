@@ -211,12 +211,7 @@ impl<D> Stream for LooseEnvelopeStream<D> {
 #[async_trait]
 impl<D: 'static + Digest + Send + Sync> WritableStore<D> for LooseStore<D> {
     async fn add<T: AsRef<[u8]> + Send>(&self, object: Envelope<T>) -> anyhow::Result<bool> {
-        let mut digest = D::new();
-        let item = object.payload_bytes().as_ref();
-        let header = format!("{} {}\0", object.to_string(), item.len());
-        digest.input(&header);
-        digest.input(item);
-        let bytes = digest.result();
+        let (bytes, header) = object.content_address::<D>();
         let bytes_encoded = hex::encode(bytes);
         let mut loc = self.location.clone();
         loc.push(&bytes_encoded[0..2]);
@@ -253,7 +248,7 @@ impl<D: 'static + Digest + Send + Sync> WritableStore<D> for LooseStore<D> {
 
         let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
         enc.write_all(header.as_ref())?;
-        enc.write_all(item)?;
+        enc.write_all(object.payload_bytes().as_ref())?;
         fd.write_all(&enc.finish()?).await?;
         fd.sync_data().await?;
         afs::rename(&tmp, loc).await?;

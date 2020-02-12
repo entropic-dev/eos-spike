@@ -98,7 +98,9 @@ async fn load_file<D: Digest + Send + Sync, S: WritableStore<D> + Send + Sync>(
             file
         )),
         Ok(data) => {
-            let result = match store.add(Envelope::Blob(data)).await {
+            let blob = Envelope::Blob(data);
+            let (content_address, _) = blob.content_address::<Sha256>();
+            let result = match store.add(blob).await {
                 Err(_e) => {
                     return Ok(format!(
                         "{} failed to write {:?}",
@@ -110,19 +112,16 @@ async fn load_file<D: Digest + Send + Sync, S: WritableStore<D> + Send + Sync>(
             };
 
             if result {
-                Ok(format!("{} wrote {:?}", "OK: ".white().on_green(), file))
+                Ok(format!("{}", hex::encode(content_address).white().on_green()))
             } else {
-                Ok(format!(
-                    "{} already had {:?}",
-                    "MU: ".white().on_purple(),
-                    file
-                ))
+                Ok(format!("{}", hex::encode(content_address).white().on_purple()))
             }
         }
     }
 }
 
 async fn cmd_add<D: Digest + Send + Sync, S: WritableStore<D> + Send + Sync>(
+    eos: &Eos,
     store: S,
     files: &[PathBuf],
 ) -> anyhow::Result<()> {
@@ -139,7 +138,7 @@ async fn cmd_add<D: Digest + Send + Sync, S: WritableStore<D> + Send + Sync>(
 
     while concurrent.len() > 0 {
         let (result, _idx, rest) = select_all(concurrent).await;
-        println!("{}", result?);
+        eos.log(format!("{}", result?));
         concurrent = rest;
         if let Some(popped) = pending.pop() {
             concurrent.push(popped);
@@ -239,7 +238,7 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 processed_files = files.clone();
             }
-            cmd_add(loose, &processed_files).await?
+            cmd_add(&eos, loose, &processed_files).await?
         }
         Command::Get { hashes, backend } => match backend {
             Backends::Loose => cmd_get(&eos, loose, &hashes[..]).await?,

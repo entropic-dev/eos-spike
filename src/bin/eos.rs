@@ -192,7 +192,7 @@ async fn cmd_get<S: ReadableStore, T: AsRef<str>>(eos: &Eos, store: S, hashes: &
                 match opt {
                     Some(obj) => {
                         eos.log(format!("{} got {}", "OK: ".white().on_green(), obj.to_string()));
-                        //::std::io::Write::write_all(&mut ::std::io::stdout(), obj.bytes());
+                        // ::std::io::Write::write_all(&mut ::std::io::stdout(), obj.bytes());
                     }
                     None => {
                         eos.error(format!(

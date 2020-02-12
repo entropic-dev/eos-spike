@@ -1,0 +1,20 @@
+# NOTES SOMETIME IN THE PAST
+
+goal: transfer objects between two processes
+
+- iterate events
+- write events through a cli
+- output hashes when you add an object
+
+# NOTES 2/11
+
+- Iterator testing
+    - wire up the iterator to the ReadableStore trait
+    - time it, explore using making a "PartialEvent" struct that
+      only parses the bitmask
+    - Wire up the iterator to a command (eos)
+    - Verification once we have an iterator
+- Niceties
+    - Envelope grew a "content_address" method, start outputing that content address when adding new items to the store
+    - Add a "eos init" to create the cache directory structure
+    - Start speccing out version objects

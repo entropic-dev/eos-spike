@@ -34,6 +34,22 @@ impl FromStr for Backends {
     }
 }
 
+impl Eos {
+    fn log<T: AsRef<str>>(&self, s: T) -> anyhow::Result<()> {
+        if !self.quiet {
+            println!("{}", s.as_ref());
+        }
+        Ok(())
+    }
+
+    fn error<T: AsRef<str>>(&self, s: T) -> anyhow::Result<()> {
+        if !self.quiet {
+            eprintln!("{}", s.as_ref());
+        }
+        Ok(())
+    }
+}
+
 #[derive(StructOpt)]
 enum Command {
     Add {
@@ -67,6 +83,8 @@ struct Eos {
     parent: Option<String>,
     #[structopt(subcommand)]
     command: Command,
+    #[structopt(short, long)]
+    quiet: bool,
 }
 
 async fn load_file<D: Digest + Send + Sync, S: WritableStore<D> + Send + Sync>(
@@ -80,7 +98,9 @@ async fn load_file<D: Digest + Send + Sync, S: WritableStore<D> + Send + Sync>(
             file
         )),
         Ok(data) => {
-            let result = match store.add(Envelope::Blob(data)).await {
+            let blob = Envelope::Blob(data);
+            let (content_address, _) = blob.content_address::<Sha256>();
+            let result = match store.add(blob).await {
                 Err(_e) => {
                     return Ok(format!(
                         "{} failed to write {:?}",
@@ -92,19 +112,16 @@ async fn load_file<D: Digest + Send + Sync, S: WritableStore<D> + Send + Sync>(
             };
 
             if result {
-                Ok(format!("{} wrote {:?}", "OK: ".white().on_green(), file))
+                Ok(format!("{}", hex::encode(content_address).white().on_green()))
             } else {
-                Ok(format!(
-                    "{} already had {:?}",
-                    "MU: ".white().on_purple(),
-                    file
-                ))
+                Ok(format!("{}", hex::encode(content_address).white().on_purple()))
             }
         }
     }
 }
 
 async fn cmd_add<D: Digest + Send + Sync, S: WritableStore<D> + Send + Sync>(
+    eos: &Eos,
     store: S,
     files: &[PathBuf],
 ) -> anyhow::Result<()> {
@@ -121,7 +138,7 @@ async fn cmd_add<D: Digest + Send + Sync, S: WritableStore<D> + Send + Sync>(
 
     while concurrent.len() > 0 {
         let (result, _idx, rest) = select_all(concurrent).await;
-        println!("{}", result?);
+        eos.log(format!("{}", result?));
         concurrent = rest;
         if let Some(popped) = pending.pop() {
             concurrent.push(popped);
@@ -131,7 +148,7 @@ async fn cmd_add<D: Digest + Send + Sync, S: WritableStore<D> + Send + Sync>(
     Ok(())
 }
 
-async fn cmd_get<S: ReadableStore, T: AsRef<str>>(store: S, hashes: &[T]) -> anyhow::Result<()> {
+async fn cmd_get<S: ReadableStore, T: AsRef<str>>(eos: &Eos, store: S, hashes: &[T]) -> anyhow::Result<()> {
     let cksize = Sha256::new().result().len();
     let valid_hashes: Vec<_> = hashes
         .iter()
@@ -174,21 +191,20 @@ async fn cmd_get<S: ReadableStore, T: AsRef<str>>(store: S, hashes: &[T]) -> any
             Ok(opt) => {
                 match opt {
                     Some(obj) => {
-                        println!("{} got {}", "OK: ".white().on_green(), obj.to_string());
-                        //::std::io::Write::write_all(&mut ::std::io::stdout(), obj.bytes());
+                        eos.log(format!("{} got {}", "OK: ".white().on_green(), obj.to_string()));
+                        // ::std::io::Write::write_all(&mut ::std::io::stdout(), obj.bytes());
                     }
                     None => {
-                        println!(
+                        eos.error(format!(
                             "{} could not find that hash ({})",
                             "MU: ".white().on_purple(),
                             cleaned_hashes[idx]
-                        );
+                        ));
                     }
                 }
             }
             Err(_e) => {
-                dbg!(_e);
-                println!("{} error reading hash {}", "ERR:".white().on_red(), idx);
+                eos.error(format!("{} error reading hash {}", "ERR:".white().on_red(), idx));
             }
         }
     }
@@ -199,7 +215,7 @@ async fn cmd_get<S: ReadableStore, T: AsRef<str>>(store: S, hashes: &[T]) -> any
 #[async_std::main]
 async fn main() -> anyhow::Result<()> {
     let eos = Eos::from_args();
-    let destination = eos.dir.unwrap_or_else(|| {
+    let destination = eos.dir.clone().unwrap_or_else(|| {
         let mut pb = dirs::home_dir().unwrap();
         pb.push(".eos");
         pb
@@ -222,18 +238,18 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 processed_files = files.clone();
             }
-            cmd_add(loose, &processed_files).await?
+            cmd_add(&eos, loose, &processed_files).await?
         }
         Command::Get { hashes, backend } => match backend {
-            Backends::Loose => cmd_get(loose, &hashes[..]).await?,
-            Backends::Packed => cmd_get(packfiles, &hashes[..]).await?,
+            Backends::Loose => cmd_get(&eos, loose, &hashes[..]).await?,
+            Backends::Packed => cmd_get(&eos, packfiles, &hashes[..]).await?,
         },
         Command::GetAll { hashfile, backend } => {
             let data = fs::read(&hashfile).await?;
             let hashes: Vec<_> = std::str::from_utf8(&data)?.trim().split("\n").collect();
             match backend {
-                Backends::Loose => cmd_get(loose, &hashes[..]).await?,
-                Backends::Packed => cmd_get(packfiles, &hashes[..]).await?,
+                Backends::Loose => cmd_get(&eos, loose, &hashes[..]).await?,
+                Backends::Packed => cmd_get(&eos, packfiles, &hashes[..]).await?,
             }
         }
         Command::Pack {} => loose.to_packed_store().await?,

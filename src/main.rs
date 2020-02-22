@@ -3,6 +3,8 @@ use tracing::{ info, error, span, Level };
 use tide::{ Request, Response, Next };
 mod middleware;
 mod handlers;
+mod stores;
+mod packument;
 
 #[async_std::main]
 async fn main() -> Result<(), std::io::Error> {

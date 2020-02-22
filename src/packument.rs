@@ -19,28 +19,31 @@ pub struct Dist {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct PackageVersion {
+pub struct Version {
     dist: Dist,
     #[serde(rename = "_hasShrinkwrap")]
-    has_shrinkwrap: Option<bool>
+    has_shrinkwrap: Option<bool>,
+
+    #[serde(flatten)]
+    rest: HashMap<String, Value>
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct PackageHuman {
+pub struct Human {
     name: String,
     email: String
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct Packument {
-    author: Option<PackageHuman>,
+    author: Option<Human>,
     name: String,
     description: Option<String>,
-    versions: HashMap<String, PackageVersion>,
+    versions: HashMap<String, Version>,
     time: HashMap<String, DateTime<Utc>>,
     #[serde(rename = "dist-tags")]
     tags: HashMap<String, String>,
-    maintainers: Vec<PackageHuman>,
+    maintainers: Vec<Human>,
     users: Option<Vec<String>>,
 
     #[serde(flatten)]

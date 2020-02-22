@@ -1,5 +1,7 @@
-use crate::packument::Packument;
+use crate::packument::{ Packument, Human };
 use std::io::Read;
+use futures::io::AsyncRead;
+use futures::future::BoxFuture;
 use chrono::{ DateTime, Utc };
 
 mod readthrough;
@@ -36,7 +38,7 @@ pub trait ReadableStore {
 pub trait AuthorityStore {
     fn check_password<T: AsRef<str>, S: AsRef<str>>(&self, username: T, password: S) -> anyhow::Result<bool>;
 
-    fn signup<>(&self, username: T, password: S, email: V) -> anyhow::Result<PackageUser>;
+    fn signup<T: AsRef<str>, S: AsRef<str>, V: AsRef<str>>(&self, username: T, password: S, email: V) -> anyhow::Result<Human>;
 }
 
 pub trait WritableStore : ReadableStore {

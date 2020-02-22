@@ -1,15 +1,16 @@
 use crate::stores::{ ReadableStore, WritableStore };
-use chrono::Duration;
+use std::collections::HashSet;
+use chrono::{ Utc, Duration };
 
-struct ReadThrough<T: ReadableStore + WritableStore> {
+pub struct ReadThrough<T: ReadableStore + WritableStore> {
     inner_store: T,
     upstream_url: String,
     allow: Option<HashSet<String>>,
     block: Option<HashSet<String>>,
     fetch_after: Duration
 }
-
-impl<T: ReadableStore + WritableStore> ReadableStore for ReadThrough<T> {
+/*
+impl<Store: ReadableStore + WritableStore> ReadableStore for ReadThrough<Store> {
     fn get_packument_raw<T: AsRef<str>>(&self, package: T) -> Option<(Box<dyn Read>, [u8; 32])> {
 
         if let Some(ref block) = self.block {
@@ -43,3 +44,4 @@ impl<T: ReadableStore + WritableStore> ReadableStore for ReadThrough<T> {
     }
 
 }
+*/

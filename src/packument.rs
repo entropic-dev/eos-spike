@@ -9,8 +9,10 @@ pub struct Dist {
     tarball: String,
 
     integrity: Option<String>,
-    fileCount: Option<i64>,
-    unpackedSize: Option<i64>,
+    #[serde(rename = "fileCount")]
+    file_count: Option<i64>,
+    #[serde(rename = "unpackedSize")]
+    unpacked_size: Option<i64>,
     #[serde(rename = "npm-signature")]
     npm_signature: Option<String>,
 

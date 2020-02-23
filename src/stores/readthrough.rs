@@ -1,15 +1,23 @@
 use crate::stores::{ ReadableStore, WritableStore };
+use futures::io::{ AsyncReadExt, AsyncRead };
 use std::collections::HashSet;
 use chrono::{ Utc, Duration };
+use std::marker::PhantomData;
 
-pub struct ReadThrough<T: ReadableStore + WritableStore> {
+pub struct ReadThrough<R: ReadableStore> {
+    inner_store: R
+}
+
+/*
+pub struct ReadThrough<R: AsyncRead + AsyncReadExt + std::marker::Unpin, T: ReadableStore<R> + WritableStore<R>> {
     inner_store: T,
     upstream_url: String,
     allow: Option<HashSet<String>>,
     block: Option<HashSet<String>>,
-    fetch_after: Duration
+    fetch_after: Duration,
+    _pd: PhantomData<R>
 }
-/*
+
 impl<Store: ReadableStore + WritableStore> ReadableStore for ReadThrough<Store> {
     fn get_packument_raw<T: AsRef<str>>(&self, package: T) -> Option<(Box<dyn Read>, [u8; 32])> {
 

@@ -1,8 +1,10 @@
 use crate::packument::{ Packument, Human };
 use std::io::Read;
-use futures::io::AsyncRead;
+use futures::io::{ AsyncReadExt, AsyncRead };
 use futures::future::BoxFuture;
 use chrono::{ DateTime, Utc };
+use async_trait::async_trait;
+use anyhow::Result;
 
 mod readthrough;
 
@@ -12,42 +14,61 @@ pub struct PackageMetadata {
 }
 
 pub use readthrough::ReadThrough;
+
+#[async_trait]
 pub trait ReadableStore {
-    fn get_packument<T: AsRef<str>>(&self, package: T) -> Option<Packument> {
-        if let Some((reader, hash)) = self.get_packument_raw(package) {
-            let packument = serde_json::from_reader(reader).ok()?;
-            return Some(packument)
+    type Reader: AsyncRead + Send + Sync + std::marker::Unpin;
+
+    async fn get_packument<T>(&self, package: T) -> Result<Option<Packument>>
+        where T: AsRef<str> + Send + Sync {
+        if let Some((mut reader, hash)) = self.get_packument_raw(package).await? {
+            let mut bytes = Vec::new();
+            reader.read_to_end(&mut bytes).await?;
+
+            let packument = serde_json::from_slice(&bytes[..])?;
+            return Ok(Some(packument))
         }
 
-        None
+        Ok(None)
     }
 
-    fn get_packument_raw<T: AsRef<str>>(&self, package: T) -> Option<(Box<dyn Read>, PackageMetadata)> {
-        None
+    async fn get_packument_raw<T>(&self, package: T) -> Result<Option<(Self::Reader, PackageMetadata)>>
+        where T: AsRef<str> + Send + Sync {
+        Ok(None)
     }
 
-    fn get_packument_readme<T: AsRef<str>>(&self, package: T) -> Option<Box<dyn Read>> {
-        None
+    fn get_packument_readme<T>(&self, package: T) -> Result<Option<Self::Reader>>
+        where T: AsRef<str> + Send + Sync {
+        Ok(None)
     }
 
-    fn get_tarball<T: AsRef<str>, S: AsRef<str>>(&self, package: T, version: S) -> Option<(Box<dyn Read>, PackageMetadata)> {
-        None
+    fn get_tarball<T, S>(&self, package: T, version: S) -> Result<Option<(Self::Reader, PackageMetadata)>>
+        where T: AsRef<str> + Send + Sync,
+              S: AsRef<str> + Send + Sync {
+        Ok(None)
     }
 }
 
+pub trait WritableStore {
+    fn upsert_packument<T: AsRef<str>, B: std::io::Read>(&self, package: T, body: B) -> Result<PackageMetadata>;
+
+
+    fn update_metadata<T: AsRef<str>>(&self, package: T, metadata: PackageMetadata) -> Result<PackageMetadata>;
+}
+
+/*
+#[async_trait]
 pub trait AuthorityStore {
-    fn check_password<T: AsRef<str>, S: AsRef<str>>(&self, username: T, password: S) -> anyhow::Result<bool>;
+    async fn check_password<T, S>(&self, username: T, password: S) -> Result<bool>
+        where T: AsRef<str> + Send + Sync,
+              S: AsRef<str> + Send + Sync;
 
-    fn signup<T: AsRef<str>, S: AsRef<str>, V: AsRef<str>>(&self, username: T, password: S, email: V) -> anyhow::Result<Human>;
+    async fn signup<T, S, V>(&self, username: T, password: S, email: V) -> Result<Human>
+        where T: AsRef<str> + Send + Sync,
+              S: AsRef<str> + Send + Sync,
+              V: AsRef<str> + Send + Sync;
 }
+*/
 
-pub trait WritableStore : ReadableStore {
-    fn upsert_packument<T: AsRef<str>, R: std::io::Read>(&self, package: T, body: R) -> anyhow::Result<PackageMetadata>;
-
-
-    fn update_metadata<T: AsRef<str>>(&self, package: T, metadata: PackageMetadata) -> anyhow::Result<PackageMetadata>;
-
-}
-
-impl ReadableStore for () {
-}
+// impl ReadableStore for () {
+// }

@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
-use serde_json::Value;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize)]
 pub struct Dist {
@@ -17,7 +17,7 @@ pub struct Dist {
     npm_signature: Option<String>,
 
     #[serde(flatten)]
-    rest: HashMap<String, Value>
+    rest: HashMap<String, Value>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -27,13 +27,13 @@ pub struct Version {
     has_shrinkwrap: Option<bool>,
 
     #[serde(flatten)]
-    rest: HashMap<String, Value>
+    rest: HashMap<String, Value>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct Human {
     name: String,
-    email: String
+    email: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -49,7 +49,7 @@ pub struct Packument {
     users: Option<Vec<String>>,
 
     #[serde(flatten)]
-    rest: HashMap<String, Value>
+    rest: HashMap<String, Value>,
 }
 
 /*
@@ -66,5 +66,3 @@ pub enum PackumentAction {
     RemoveCollaborator
 }
 */
-
-

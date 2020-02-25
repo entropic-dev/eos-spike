@@ -1,7 +1,7 @@
-use tracing::{ info, error, span, Level };
-use tide::{ Request, Response, Next, Middleware };
 use async_trait::async_trait;
 use futures::future::BoxFuture;
+use tide::{Middleware, Next, Request, Response};
+use tracing::{error, info, span, Level};
 
 pub struct Logging {}
 
